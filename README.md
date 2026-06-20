@@ -27,6 +27,7 @@ remote backends without rewriting sampling and stop handling.
 - Nano-VLLM-style model-runner batch preparation
 - Nano-VLLM-style model-runner orchestration over prepared sequence batches
 - Nano-VLLM-style attention context utilities for runner calls
+- Nano-VLLM-compatible `Sequence` scheduler facade
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters
@@ -133,13 +134,17 @@ batches. The active scheduler mirrors Nano-VLLM's higher-level shape with
 separate waiting and running queues plus prefill/decode phases:
 
 ```python
-from nexinfer import ActiveScheduler, RequestQueue
+from nexinfer import ActiveScheduler, RequestQueue, Scheduler, Sequence
 
 queue = RequestQueue()
 queue.submit("hello")
 batch = queue.schedule(max_requests=8)
 
 active_scheduler = ActiveScheduler(max_num_seqs=8, max_num_batched_tokens=2048)
+
+scheduler = Scheduler(max_num_seqs=8, max_num_batched_tokens=2048)
+scheduler.add(Sequence([1, 2, 3]))
+seqs, is_prefill = scheduler.schedule()
 ```
 
 For queued execution, wrap an engine in `InferenceRuntime`:

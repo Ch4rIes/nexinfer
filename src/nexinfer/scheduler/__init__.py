@@ -5,6 +5,7 @@ from nexinfer.scheduler.continuous import (
     ScheduledSequence,
     SchedulePhase,
 )
+from nexinfer.scheduler.nano import Scheduler
 from nexinfer.scheduler.request import GenerationRequest, RequestQueue, ScheduledBatch
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "ActiveSequence",
     "GenerationRequest",
     "RequestQueue",
+    "Scheduler",
     "ScheduledActiveBatch",
     "ScheduledBatch",
     "ScheduledSequence",

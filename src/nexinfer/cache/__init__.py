@@ -1,4 +1,5 @@
 from nexinfer.cache.kv import (
+    BlockManager,
     KVCacheAllocation,
     KVCacheAllocationPlan,
     KVCacheBlock,
@@ -9,6 +10,7 @@ from nexinfer.cache.kv import (
 )
 
 __all__ = [
+    "BlockManager",
     "KVCacheAllocation",
     "KVCacheAllocationPlan",
     "KVCacheBlock",

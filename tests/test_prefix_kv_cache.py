@@ -1,6 +1,6 @@
 import pytest
 
-from nexinfer import CacheError, PrefixKVCacheBlockManager
+from nexinfer import BlockManager, CacheError, PrefixKVCacheBlockManager, Sequence
 
 
 def test_prefix_manager_reuses_deallocated_cached_prefix() -> None:
@@ -69,3 +69,93 @@ def test_prefix_manager_hashes_only_complete_blocks_once() -> None:
 
     assert len(first_hashes) == 1
     assert second_hashes == ()
+
+
+def test_block_manager_allocates_sequence_block_table() -> None:
+    manager = BlockManager(4, 2)
+    seq = Sequence([1, 2, 3, 4, 5])
+
+    cached_blocks = manager.can_allocate(seq)
+    manager.allocate(seq, cached_blocks)
+
+    assert cached_blocks == 0
+    assert seq.block_table == [0, 1, 2]
+    assert seq.num_cached_tokens == 0
+    assert manager.used_blocks == 3
+
+
+def test_block_manager_reuses_deallocated_sequence_prefix() -> None:
+    manager = BlockManager(4, 2)
+    first = Sequence([1, 2, 3, 4, 5])
+    manager.allocate(first, manager.can_allocate(first))
+    first.num_scheduled_tokens = 4
+    manager.hash_blocks(first)
+    first_prefix_blocks = tuple(first.block_table[:2])
+    manager.deallocate(first)
+
+    second = Sequence([1, 2, 3, 4, 9])
+    cached_blocks = manager.can_allocate(second)
+    manager.allocate(second, cached_blocks)
+
+    assert cached_blocks == 2
+    assert second.block_table[:2] == list(first_prefix_blocks)
+    assert second.num_cached_tokens == 4
+
+
+def test_block_manager_shares_running_sequence_prefix_with_refcounts() -> None:
+    manager = BlockManager(4, 2)
+    first = Sequence([1, 2, 3])
+    manager.allocate(first, manager.can_allocate(first))
+    first.num_scheduled_tokens = 2
+    manager.hash_blocks(first)
+    prefix_block_id = first.block_table[0]
+
+    second = Sequence([1, 2, 9])
+    cached_blocks = manager.can_allocate(second)
+    manager.allocate(second, cached_blocks)
+
+    assert cached_blocks == 1
+    assert second.block_table[0] == prefix_block_id
+    assert manager.blocks[prefix_block_id].ref_count == 2
+
+    manager.deallocate(second)
+
+    assert manager.blocks[prefix_block_id].ref_count == 1
+
+
+def test_block_manager_append_allocates_when_sequence_enters_new_block() -> None:
+    manager = BlockManager(2, 2)
+    seq = Sequence([1, 2])
+    manager.allocate(seq, manager.can_allocate(seq))
+
+    seq.append_token(3)
+
+    assert manager.can_append(seq) is True
+    manager.may_append(seq)
+
+    assert seq.block_table == [0, 1]
+    assert manager.allocation(str(seq.seq_id)).token_count == 3
+
+
+def test_block_manager_append_reports_capacity_pressure() -> None:
+    manager = BlockManager(1, 2)
+    seq = Sequence([1, 2])
+    manager.allocate(seq, manager.can_allocate(seq))
+    seq.append_token(3)
+
+    assert manager.can_append(seq) is False
+    with pytest.raises(CacheError, match="not enough free"):
+        manager.may_append(seq)
+
+
+def test_block_manager_deallocate_mutates_sequence() -> None:
+    manager = BlockManager(2, 2)
+    seq = Sequence([1, 2])
+    manager.allocate(seq, manager.can_allocate(seq))
+    seq.num_cached_tokens = 2
+
+    manager.deallocate(seq)
+
+    assert seq.block_table == []
+    assert seq.num_cached_tokens == 0
+    assert manager.used_blocks == 0

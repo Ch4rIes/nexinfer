@@ -7,6 +7,7 @@ import hashlib
 from math import ceil
 
 from nexinfer.errors import CacheError, ConfigurationError
+from nexinfer.sequence import Sequence as RunnerSequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,3 +398,119 @@ class PrefixKVCacheBlockManager:
         start = block_index * self.block_size
         end = start + self.block_size
         return list(token_ids[start:end])
+
+
+class BlockManager(PrefixKVCacheBlockManager):
+    """Nano-VLLM-compatible block manager that mutates Sequence objects."""
+
+    def __init__(self, num_blocks: int, block_size: int) -> None:
+        super().__init__(num_blocks=num_blocks, block_size=block_size)
+
+    def can_allocate(self, seq: RunnerSequence) -> int:  # type: ignore[override]
+        h = -1
+        num_cached_blocks = 0
+        num_new_blocks = self._sequence_num_blocks(seq)
+        for block_index in range(max(self._sequence_num_blocks(seq) - 1, 0)):
+            token_ids = self._sequence_block(seq, block_index)
+            h = self.compute_hash(token_ids, h)
+            block_id = self.hash_to_block_id.get(h, -1)
+            if block_id == -1 or self.blocks[block_id].token_ids != tuple(token_ids):
+                break
+            num_cached_blocks += 1
+            if block_id in self.used_block_ids:
+                num_new_blocks -= 1
+
+        if self.free_blocks < num_new_blocks:
+            return -1
+        return num_cached_blocks
+
+    def allocate(self, seq: RunnerSequence, num_cached_blocks: int) -> None:  # type: ignore[override]
+        if seq.block_table:
+            raise CacheError("sequence already has a block table")
+        if num_cached_blocks < 0:
+            raise ConfigurationError("num_cached_blocks must be non-negative")
+
+        available_cached_blocks = self.can_allocate(seq)
+        if available_cached_blocks == -1:
+            raise CacheError("not enough free KV-cache blocks")
+        if num_cached_blocks > available_cached_blocks:
+            raise CacheError("num_cached_blocks exceeds available prefix cache")
+
+        h = -1
+        for block_index in range(num_cached_blocks):
+            token_ids = self._sequence_block(seq, block_index)
+            h = self.compute_hash(token_ids, h)
+            block_id = self.hash_to_block_id[h]
+            block = self.blocks[block_id]
+            if block_id in self.used_block_ids:
+                block.ref_count += 1
+            else:
+                block.ref_count = 1
+                self.free_block_ids.remove(block_id)
+                self.used_block_ids.add(block_id)
+            seq.block_table.append(block_id)
+
+        for _ in range(num_cached_blocks, self._sequence_num_blocks(seq)):
+            seq.block_table.append(self._allocate_block())
+
+        seq.num_cached_tokens = num_cached_blocks * self.block_size
+        self._allocations[self._sequence_id(seq)] = ManagedKVCacheAllocation(
+            sequence_id=self._sequence_id(seq),
+            block_table=seq.block_table,
+            block_size=self.block_size,
+            token_count=len(seq),
+            num_cached_tokens=seq.num_cached_tokens,
+            num_hashed_tokens=seq.num_cached_tokens,
+        )
+
+    def deallocate(self, seq: RunnerSequence) -> None:  # type: ignore[override]
+        for block_id in reversed(seq.block_table):
+            block = self.blocks[block_id]
+            block.ref_count -= 1
+            if block.ref_count == 0:
+                self._deallocate_block(block_id)
+
+        self._allocations.pop(self._sequence_id(seq), None)
+        seq.num_cached_tokens = 0
+        seq.block_table.clear()
+
+    def can_append(self, seq: RunnerSequence) -> bool:  # type: ignore[override]
+        return self.free_blocks >= int(len(seq) % self.block_size == 1)
+
+    def may_append(self, seq: RunnerSequence) -> None:
+        if len(seq) % self.block_size == 1:
+            seq.block_table.append(self._allocate_block())
+        allocation = self._allocations.get(self._sequence_id(seq))
+        if allocation is not None:
+            allocation.token_count = len(seq)
+
+    def hash_blocks(self, seq: RunnerSequence) -> tuple[int, ...]:  # type: ignore[override]
+        start = seq.num_cached_tokens // self.block_size
+        end = (seq.num_cached_tokens + seq.num_scheduled_tokens) // self.block_size
+        if start == end:
+            return ()
+
+        h = self.blocks[seq.block_table[start - 1]].hash if start > 0 else -1
+        hashes: list[int] = []
+        for block_index in range(start, end):
+            block_id = seq.block_table[block_index]
+            token_ids = self._sequence_block(seq, block_index)
+            h = self.compute_hash(token_ids, h)
+            self.blocks[block_id].update(h, token_ids)
+            self.hash_to_block_id[h] = block_id
+            hashes.append(h)
+
+        allocation = self._allocations.get(self._sequence_id(seq))
+        if allocation is not None:
+            allocation.num_hashed_tokens = end * self.block_size
+        return tuple(hashes)
+
+    def _sequence_id(self, seq: RunnerSequence) -> str:
+        return str(seq.seq_id)
+
+    def _sequence_num_blocks(self, seq: RunnerSequence) -> int:
+        return self._num_blocks_for_tokens(len(seq))
+
+    def _sequence_block(self, seq: RunnerSequence, block_index: int) -> list[int]:
+        start = block_index * self.block_size
+        return seq.token_ids[start : start + self.block_size]

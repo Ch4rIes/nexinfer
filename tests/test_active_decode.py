@@ -1,5 +1,6 @@
 from nexinfer import GenerationConfig, GenerationRequest, LLMEngine, SamplingConfig
 from nexinfer.backends import BigramBackend
+from nexinfer.protocols import DecodeState, ModelOutput
 from nexinfer.tokenizer import VocabularyTokenizer
 
 
@@ -58,3 +59,49 @@ def test_active_sequence_finishes_when_effective_limit_is_zero() -> None:
 
     assert active.is_finished is True
     assert active.sequence.finish_reason == "length"
+
+
+def test_interleaved_requests_decode_round_robin() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "x", "y", "z", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+
+    class TracingBackend(BigramBackend):
+        def __init__(self) -> None:
+            super().__init__(
+                vocab_size=len(tokenizer),
+                transitions={
+                    tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+                    tokenizer.token_id("b"): {tokenizer.token_id("c"): 5.0},
+                    tokenizer.token_id("c"): {eos_id: 5.0},
+                    tokenizer.token_id("x"): {tokenizer.token_id("y"): 5.0},
+                    tokenizer.token_id("y"): {tokenizer.token_id("z"): 5.0},
+                    tokenizer.token_id("z"): {eos_id: 5.0},
+                },
+            )
+            self.steps: list[int] = []
+
+        def step(self, token_id: int, state: DecodeState) -> ModelOutput:
+            self.steps.append(token_id)
+            return super().step(token_id, state)
+
+    backend = TracingBackend()
+    engine = LLMEngine(backend, tokenizer)
+    config = GenerationConfig(
+        max_new_tokens=8,
+        sampling=SamplingConfig(temperature=0),
+        stop_token_ids=(eos_id,),
+    )
+    requests = [
+        GenerationRequest("one", "a", config),
+        GenerationRequest("two", "x", config),
+    ]
+
+    results = engine.complete_requests_interleaved(requests)
+
+    assert [result.text for result in results] == ["b c", "y z"]
+    assert backend.steps == [
+        tokenizer.token_id("b"),
+        tokenizer.token_id("y"),
+        tokenizer.token_id("c"),
+        tokenizer.token_id("z"),
+    ]

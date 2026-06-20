@@ -51,20 +51,7 @@ class LLMEngine:
             prompt_token_ids,
             config,
         )
-        token_ids = sequence.output_token_ids(include_prompt=config.include_prompt)
-
-        return GenerationResult(
-            text=self._tokenizer.decode(token_ids),
-            token_ids=token_ids,
-            prompt_token_ids=sequence.prompt_token_ids,
-            generated_token_ids=sequence.generated_token_ids,
-            generated_token_logprobs=sequence.generated_token_logprobs,
-            finish_reason=sequence.finish_reason or "length",
-            usage=TokenUsage(
-                prompt_tokens=len(sequence.prompt_token_ids),
-                completion_tokens=sequence.completion_tokens,
-            ),
-        )
+        return self._result_from_sequence(sequence, config)
 
     def complete_batch(
         self,
@@ -82,6 +69,23 @@ class LLMEngine:
         """Generate structured results for scheduled requests."""
 
         return [self.complete(request.prompt, request.config) for request in requests]
+
+    def complete_requests_interleaved(
+        self,
+        requests: list[GenerationRequest],
+    ) -> list[GenerationResult]:
+        """Generate scheduled requests by round-robin decoding active sequences."""
+
+        active_sequences = [self.start_request(request) for request in requests]
+        while any(not active.is_finished for active in active_sequences):
+            for active in active_sequences:
+                if not active.is_finished:
+                    self.decode_one(active)
+
+        return [
+            self._result_from_sequence(active.sequence, active.request.config)
+            for active in active_sequences
+        ]
 
     def start_request(self, request: GenerationRequest) -> ActiveSequence:
         """Admit a scheduled request and run its prefill step."""
@@ -223,6 +227,26 @@ class LLMEngine:
 
         sequence.finish("length")
         return sequence
+
+    def _result_from_sequence(
+        self,
+        sequence: SequenceState,
+        config: GenerationConfig,
+    ) -> GenerationResult:
+        token_ids = sequence.output_token_ids(include_prompt=config.include_prompt)
+
+        return GenerationResult(
+            text=self._tokenizer.decode(token_ids),
+            token_ids=token_ids,
+            prompt_token_ids=sequence.prompt_token_ids,
+            generated_token_ids=sequence.generated_token_ids,
+            generated_token_logprobs=sequence.generated_token_logprobs,
+            finish_reason=sequence.finish_reason or "length",
+            usage=TokenUsage(
+                prompt_tokens=len(sequence.prompt_token_ids),
+                completion_tokens=sequence.completion_tokens,
+            ),
+        )
 
 
 def _validate_prompt_limits(input_ids: list[int], config: GenerationConfig) -> None:

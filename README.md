@@ -21,6 +21,7 @@ remote backends without rewriting sampling and stop handling.
 - simple batch APIs
 - Nano-VLLM-style `LLM.generate` facade and `SamplingParams`
 - Nano-VLLM-style `LLMConfig` constructor surface
+- optional `LLM` execution through `ModelRunner` and `Scheduler`
 - Nano-VLLM-style `Sequence` payload for scheduler/model-runner handoff
 - explicit sequence and decode state
 - optional batched backend prefill/decode contract with scheduled-token metadata
@@ -157,12 +158,23 @@ For direct Nano-VLLM-style runner orchestration, use `NanoLLMEngine` with a
 `Scheduler` and `ModelRunner`:
 
 ```python
-from nexinfer import ModelRunner, NanoLLMEngine, Sampler, SamplingParams
+from nexinfer import LLM, ModelRunner, NanoLLMEngine, Sampler, SamplingParams
 
 runner = ModelRunner(model, block_size=16, sampler=Sampler())
 nano_engine = NanoLLMEngine(runner, tokenizer, scheduler)
 nano_engine.add_request("hello", SamplingParams(max_tokens=8))
 outputs, num_tokens = nano_engine.step()
+```
+
+`LLM` can also be pointed at a `ModelRunner` directly when you want the public
+facade to use the Nano-VLLM scheduler/model-runner loop:
+
+```python
+llm = LLM(
+    model_runner=runner,
+    tokenizer=tokenizer,
+    num_kvcache_blocks=1024,
+)
 ```
 
 For queued execution, wrap an engine in `InferenceRuntime`:

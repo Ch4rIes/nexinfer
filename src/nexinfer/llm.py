@@ -11,9 +11,11 @@ from nexinfer.cache import PrefixKVCacheBlockManager
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import ConfigurationError
 from nexinfer.model import LLMConfig, ModelConfig
+from nexinfer.nano_engine import NanoLLMEngine
 from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
 from nexinfer.runtime import InferenceRuntime
 from nexinfer.sampling_params import SamplingParams
+from nexinfer.scheduler import Scheduler
 from nexinfer.tokenizer import HuggingFaceTokenizer
 
 
@@ -35,7 +37,9 @@ class LLM:
         model: str | None = None,
         *,
         backend: DecoderOnlyBackend | None = None,
+        model_runner: Any | None = None,
         tokenizer: Tokenizer | None = None,
+        scheduler: Scheduler | None = None,
         config: LLMConfig | None = None,
         model_config: ModelConfig | None = None,
         enforce_eager: bool = False,
@@ -55,7 +59,25 @@ class LLM:
             raise ConfigurationError("tensor_parallel_size > 1 is not supported yet")
         self.enforce_eager = self.config.enforce_eager
 
-        if backend is None or tokenizer is None:
+        if model_runner is not None and backend is not None:
+            raise ConfigurationError("backend cannot be combined with model_runner")
+        if scheduler is not None and model_runner is None:
+            raise ConfigurationError("scheduler requires model_runner")
+
+        self._backend = backend
+        self._nano_engine: NanoLLMEngine | None = None
+        self._runtime: InferenceRuntime | None = None
+
+        if model_runner is not None:
+            if tokenizer is None:
+                raise ConfigurationError("tokenizer is required with model_runner")
+            eos_token_id = _eos_token_id(tokenizer)
+            if eos_token_id is not None:
+                self.config.eos = eos_token_id
+            scheduler = scheduler or Scheduler(self.config)
+            self.engine = NanoLLMEngine(model_runner, tokenizer, scheduler)
+            self._nano_engine = self.engine
+        elif backend is None or tokenizer is None:
             if model_config is None:
                 model_config = self.config.to_model_config()
             elif model_config.max_context_tokens is None:
@@ -65,12 +87,16 @@ class LLM:
                 )
             backend, tokenizer = self._load_model(model_config, **backend_kwargs)
 
-        eos_token_id = _eos_token_id(tokenizer)
-        if eos_token_id is not None:
-            self.config.eos = eos_token_id
-        self._backend = backend
-        self.engine = LLMEngine(backend, tokenizer)
-        self._runtime = self._build_runtime()
+        if model_runner is None:
+            assert backend is not None
+            assert tokenizer is not None
+            eos_token_id = _eos_token_id(tokenizer)
+            if eos_token_id is not None:
+                self.config.eos = eos_token_id
+            self._backend = backend
+            self.engine = LLMEngine(backend, tokenizer)
+            self._runtime = self._build_runtime()
+
         self._request_ids = count()
         self._closed = False
         self._exit_callback = self.exit
@@ -78,6 +104,8 @@ class LLM:
 
     @property
     def tokenizer(self) -> Tokenizer:
+        if self._nano_engine is not None:
+            return self._nano_engine.tokenizer
         return self.engine.tokenizer
 
     def __enter__(self) -> "LLM":
@@ -98,6 +126,8 @@ class LLM:
         self._ensure_open()
         prompt_list = list(prompts)
         params = self._normalize_sampling_params(sampling_params, len(prompt_list))
+        if self._nano_engine is not None:
+            return self._nano_engine.generate(prompt_list, params, use_tqdm=use_tqdm)
 
         request_ids: list[int] = []
         for prompt, prompt_params in zip(prompt_list, params, strict=True):
@@ -144,6 +174,13 @@ class LLM:
         """Add one request to the Nano-VLLM-style internal queue."""
 
         self._ensure_open()
+        if self._nano_engine is not None:
+            return self._nano_engine.add_request(
+                prompt,
+                sampling_params or SamplingParams(),
+            )
+
+        assert self._runtime is not None
         request_id = next(self._request_ids)
         config = (sampling_params or SamplingParams()).to_generation_config(
             eos_token_id=_eos_token_id(self.tokenizer),
@@ -156,6 +193,10 @@ class LLM:
         """Run one scheduler step and return completed outputs plus token count."""
 
         self._ensure_open()
+        if self._nano_engine is not None:
+            return self._nano_engine.step()
+
+        assert self._runtime is not None
         completed = self._runtime.run_once()
         outputs = [
             (int(item.request_id), item.result.generated_token_ids)
@@ -168,6 +209,9 @@ class LLM:
 
         if self._closed:
             return True
+        if self._nano_engine is not None:
+            return self._nano_engine.is_finished()
+        assert self._runtime is not None
         return self._runtime.pending_requests == 0
 
     def exit(self) -> None:
@@ -180,7 +224,10 @@ class LLM:
             atexit.unregister(self._exit_callback)
         except ValueError:
             pass
-        _call_optional_cleanup(self._backend)
+        if self._nano_engine is not None:
+            self._nano_engine.close()
+        elif self._backend is not None:
+            _call_optional_cleanup(self._backend)
 
     close = exit
 

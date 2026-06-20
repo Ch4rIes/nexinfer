@@ -1,3 +1,4 @@
+import random
 from collections.abc import Mapping, Sequence
 
 import pytest
@@ -6,10 +7,15 @@ from nexinfer import (
     ConfigurationError,
     LLM,
     LLMConfig,
+    ModelRunner,
     ModelOutput,
+    NanoLLMEngine,
     PrefillInput,
     SamplingParams,
+    Sampler,
     VocabularyTokenizer,
+    get_context,
+    reset_sequence_counter,
 )
 from nexinfer.backends import BigramBackend
 
@@ -45,6 +51,70 @@ class ClosingBigramBackend(BigramBackend):
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+class FixedRaceRng(random.Random):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def expovariate(self, lambd: float) -> float:
+        assert lambd == 1.0
+        return 1.0
+
+
+class ContextualRunnerModel:
+    def __init__(
+        self,
+        *,
+        vocab_size: int,
+        transitions: Mapping[int, int],
+    ) -> None:
+        self.vocab_size = vocab_size
+        self.transitions = dict(transitions)
+        self.close_calls = 0
+
+    def run_model(
+        self,
+        input_ids: list[int],
+        positions: list[int],
+        is_prefill: bool,
+    ) -> list[list[float]]:
+        token_ids = input_ids if not is_prefill else self._prefill_token_ids(input_ids)
+        return [self._logits_for(token_id) for token_id in token_ids]
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+    def _prefill_token_ids(self, input_ids: list[int]) -> list[int]:
+        context = get_context()
+        boundaries = context.cu_seqlens_q or [0, len(input_ids)]
+        return [
+            input_ids[end - 1]
+            for _, end in zip(boundaries[:-1], boundaries[1:], strict=True)
+        ]
+
+    def _logits_for(self, token_id: int) -> list[float]:
+        logits = [-100.0] * self.vocab_size
+        logits[self.transitions[token_id]] = 100.0
+        return logits
+
+
+def _runner_llm(
+    model: ContextualRunnerModel,
+    tokenizer: VocabularyTokenizer,
+    *,
+    max_num_seqs: int = 2,
+) -> LLM:
+    return LLM(
+        model_runner=ModelRunner(
+            model,
+            block_size=256,
+            sampler=Sampler(FixedRaceRng()),
+        ),
+        tokenizer=tokenizer,
+        max_num_seqs=max_num_seqs,
+        num_kvcache_blocks=8,
+    )
 
 
 def test_llm_generate_returns_nano_vllm_style_outputs() -> None:
@@ -142,6 +212,81 @@ def test_llm_generate_uses_queue_scheduler_batching() -> None:
     ]
     assert backend.begin_batch_sizes == [2]
     assert llm.add_request("a", SamplingParams(temperature=0.01, max_tokens=1)) == 2
+
+
+def test_llm_generate_can_use_model_runner_path() -> None:
+    reset_sequence_counter()
+    tokenizer = VocabularyTokenizer(["a", "b", "x", "y"], eos_token=None)
+    model = ContextualRunnerModel(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): tokenizer.token_id("b"),
+            tokenizer.token_id("x"): tokenizer.token_id("y"),
+        },
+    )
+    llm = _runner_llm(model, tokenizer, max_num_seqs=2)
+
+    outputs = llm.generate(
+        ["a", "x"],
+        SamplingParams(temperature=0.01, max_tokens=1),
+        use_tqdm=False,
+    )
+
+    assert isinstance(llm.engine, NanoLLMEngine)
+    assert outputs == [
+        {"text": "b", "token_ids": [tokenizer.token_id("b")]},
+        {"text": "y", "token_ids": [tokenizer.token_id("y")]},
+    ]
+
+
+def test_llm_model_runner_path_step_matches_nano_loop() -> None:
+    reset_sequence_counter()
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    model = ContextualRunnerModel(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): tokenizer.token_id("b"),
+            tokenizer.token_id("b"): tokenizer.eos_token_id,
+        },
+    )
+    llm = _runner_llm(model, tokenizer, max_num_seqs=1)
+
+    request_id = llm.add_request(
+        "a",
+        SamplingParams(temperature=0.01, max_tokens=2),
+    )
+
+    assert request_id == 0
+    assert llm.step() == ([], 1)
+    assert llm.step() == (
+        [(request_id, [tokenizer.token_id("b"), tokenizer.eos_token_id])],
+        -1,
+    )
+    assert llm.is_finished() is True
+
+
+def test_llm_model_runner_path_validation_and_close() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b"], eos_token=None)
+    model = ContextualRunnerModel(
+        vocab_size=len(tokenizer),
+        transitions={tokenizer.token_id("a"): tokenizer.token_id("b")},
+    )
+
+    with pytest.raises(ConfigurationError, match="tokenizer"):
+        LLM(model_runner=ModelRunner(model, block_size=256))
+    with pytest.raises(ConfigurationError, match="backend"):
+        LLM(
+            backend=BigramBackend(vocab_size=len(tokenizer)),
+            model_runner=ModelRunner(model, block_size=256),
+            tokenizer=tokenizer,
+        )
+
+    llm = _runner_llm(model, tokenizer)
+    llm.close()
+
+    assert model.close_calls == 1
+    with pytest.raises(ConfigurationError, match="closed"):
+        llm.step()
 
 
 def test_sampling_params_can_ignore_eos() -> None:

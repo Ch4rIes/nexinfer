@@ -35,10 +35,18 @@ text = engine.generate(
 print(text)
 ```
 
+Use `complete` when you need structured metadata:
+
+```python
+result = engine.complete("hello")
+print(result.text)
+print(result.finish_reason)
+print(result.usage.total_tokens)
+```
+
 ## Development
 
 ```bash
 python -m pip install -e ".[dev]"
 pytest
 ```
-# nexinfer

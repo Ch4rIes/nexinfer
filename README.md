@@ -19,6 +19,7 @@ remote backends without rewriting sampling and stop handling.
 - streaming chunks
 - simple batch APIs
 - explicit sequence and decode state
+- optional batched backend prefill/decode contract
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters
@@ -145,6 +146,7 @@ Mid-term:
 
 - connect `DecodeState.cache` to real KV-cache tensors
 - evolve request scheduling toward continuous batching
+- replace toy batch methods with real tensor-batched model runner calls
 - wire the block allocator into per-sequence KV-cache ownership
 - add prefix-cache primitives
 

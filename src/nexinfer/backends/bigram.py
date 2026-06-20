@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from nexinfer.protocols import DecodeState, ModelOutput
+from nexinfer.protocols import DecodeInput, DecodeState, ModelOutput
 
 
 class BigramBackend:
@@ -35,6 +35,9 @@ class BigramBackend:
             ),
         )
 
+    def begin_batch(self, input_ids_batch: Sequence[Sequence[int]]) -> list[ModelOutput]:
+        return [self.begin(input_ids) for input_ids in input_ids_batch]
+
     def step(self, token_id: int, state: DecodeState) -> ModelOutput:
         return ModelOutput(
             logits=self._logits_for(token_id),
@@ -44,6 +47,9 @@ class BigramBackend:
                 cache=state.cache,
             ),
         )
+
+    def step_batch(self, inputs: Sequence[DecodeInput]) -> list[ModelOutput]:
+        return [self.step(item.token_id, item.state) for item in inputs]
 
     def _logits_for(self, previous_token_id: int | None) -> list[float]:
         logits = [self._default_logit] * self._vocab_size

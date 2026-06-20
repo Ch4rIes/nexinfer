@@ -10,7 +10,14 @@ from nexinfer.errors import (
 )
 from nexinfer.model import ModelConfig
 from nexinfer.metrics import RuntimeStats
-from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
+from nexinfer.protocols import (
+    BatchedDecoderOnlyBackend,
+    DecodeInput,
+    DecodeState,
+    DecoderOnlyBackend,
+    ModelOutput,
+    Tokenizer,
+)
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
@@ -25,8 +32,10 @@ from nexinfer.tokenizer import HuggingFaceTokenizer, VocabularyTokenizer
 
 __all__ = [
     "ActiveSequence",
+    "BatchedDecoderOnlyBackend",
     "DecoderOnlyBackend",
     "DecodeState",
+    "DecodeInput",
     "BackendError",
     "CacheError",
     "ConfigurationError",

@@ -21,6 +21,14 @@ class ModelOutput:
     state: DecodeState
 
 
+@dataclass(frozen=True, slots=True)
+class DecodeInput:
+    """One token and decode state to advance in a backend batch."""
+
+    token_id: int
+    state: DecodeState
+
+
 @runtime_checkable
 class DecoderOnlyBackend(Protocol):
     """Backend contract for autoregressive decoder-only models."""
@@ -34,6 +42,17 @@ class DecoderOnlyBackend(Protocol):
 
     def step(self, token_id: int, state: DecodeState) -> ModelOutput:
         """Consume one generated token and return logits for the next one."""
+
+
+@runtime_checkable
+class BatchedDecoderOnlyBackend(DecoderOnlyBackend, Protocol):
+    """Optional backend contract for grouped prefill and decode calls."""
+
+    def begin_batch(self, input_ids_batch: Sequence[Sequence[int]]) -> list[ModelOutput]:
+        """Return next-token logits for a group of prompts."""
+
+    def step_batch(self, inputs: Sequence[DecodeInput]) -> list[ModelOutput]:
+        """Consume one generated token for each active sequence."""
 
 
 @runtime_checkable

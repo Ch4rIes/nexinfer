@@ -5,7 +5,14 @@ from collections.abc import Iterator
 
 from nexinfer.config import GenerationConfig
 from nexinfer.errors import BackendError, ConfigurationError
-from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
+from nexinfer.protocols import (
+    BatchedDecoderOnlyBackend,
+    DecodeInput,
+    DecodeState,
+    DecoderOnlyBackend,
+    ModelOutput,
+    Tokenizer,
+)
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
 from nexinfer.scheduler import ActiveSequence, GenerationRequest
@@ -76,11 +83,11 @@ class LLMEngine:
     ) -> list[GenerationResult]:
         """Generate scheduled requests by round-robin decoding active sequences."""
 
-        active_sequences = [self.start_request(request) for request in requests]
+        active_sequences = self.start_requests(requests)
         while any(not active.is_finished for active in active_sequences):
-            for active in active_sequences:
-                if not active.is_finished:
-                    self.decode_one(active)
+            self.decode_active_batch(
+                [active for active in active_sequences if not active.is_finished]
+            )
 
         return [
             self._result_from_sequence(active.sequence, active.request.config)
@@ -116,6 +123,43 @@ class LLMEngine:
             stop_token_ids=set(request.config.stop_token_ids),
         )
 
+    def start_requests(self, requests: list[GenerationRequest]) -> list[ActiveSequence]:
+        """Admit scheduled requests and batch their prefill step when possible."""
+
+        active_sequences: list[ActiveSequence] = []
+        prefill_prompts: list[list[int]] = []
+        prefill_indices: list[int] = []
+
+        for request in requests:
+            prompt_token_ids = self._tokenizer.encode(request.prompt)
+            _validate_prompt_limits(prompt_token_ids, request.config)
+            sequence = SequenceState(prompt_token_ids=prompt_token_ids)
+            max_new_tokens = _effective_max_new_tokens(prompt_token_ids, request.config)
+            active = ActiveSequence(
+                request=request,
+                sequence=sequence,
+                output=None,
+                rng=random.Random(request.config.sampling.seed),
+                max_new_tokens=max_new_tokens,
+                stop_token_ids=set(request.config.stop_token_ids),
+            )
+            active_sequences.append(active)
+            if max_new_tokens == 0:
+                sequence.finish("length")
+            else:
+                prefill_prompts.append(prompt_token_ids)
+                prefill_indices.append(len(active_sequences) - 1)
+
+        if prefill_prompts:
+            outputs = self._begin_batch(prefill_prompts)
+            if len(outputs) != len(prefill_prompts):
+                raise BackendError("backend returned wrong number of prefill outputs")
+            for active_index, output in zip(prefill_indices, outputs, strict=True):
+                _validate_model_output(output, self._backend.vocab_size)
+                active_sequences[active_index].output = output
+
+        return active_sequences
+
     def decode_one(self, active: ActiveSequence) -> ActiveSequence:
         """Decode at most one token for an active sequence."""
 
@@ -147,6 +191,54 @@ class LLMEngine:
         active.output = self._backend.step(token_id, active.output.state)
         _validate_model_output(active.output, self._backend.vocab_size)
         return active
+
+    def decode_active_batch(
+        self,
+        active_sequences: list[ActiveSequence],
+    ) -> list[ActiveSequence]:
+        """Decode at most one token for each active sequence in a batch."""
+
+        decode_inputs: list[DecodeInput] = []
+        decode_indices: list[int] = []
+
+        for index, active in enumerate(active_sequences):
+            if not active.can_decode:
+                if not active.is_finished:
+                    active.sequence.finish("length")
+                continue
+
+            assert active.output is not None
+            sampled = sample_next(
+                active.output.logits,
+                active.request.config.sampling,
+                active.rng,
+            )
+            token_id = sampled.token_id
+            if token_id in active.stop_token_ids:
+                if active.request.config.include_stop_token:
+                    active.sequence.append(token_id, sampled.logprob)
+                active.sequence.finish("stop")
+                active.output = None
+                continue
+
+            active.sequence.append(token_id, sampled.logprob)
+            if active.sequence.completion_tokens >= active.max_new_tokens:
+                active.sequence.finish("length")
+                active.output = None
+                continue
+
+            decode_inputs.append(DecodeInput(token_id=token_id, state=active.output.state))
+            decode_indices.append(index)
+
+        if decode_inputs:
+            outputs = self._step_batch(decode_inputs)
+            if len(outputs) != len(decode_inputs):
+                raise BackendError("backend returned wrong number of decode outputs")
+            for active_index, output in zip(decode_indices, outputs, strict=True):
+                _validate_model_output(output, self._backend.vocab_size)
+                active_sequences[active_index].output = output
+
+        return active_sequences
 
     def stream(self, prompt: str, config: GenerationConfig | None = None) -> Iterator[str]:
         """Yield decoded text fragments as tokens are generated."""
@@ -247,6 +339,16 @@ class LLMEngine:
                 completion_tokens=sequence.completion_tokens,
             ),
         )
+
+    def _begin_batch(self, input_ids_batch: list[list[int]]) -> list[ModelOutput]:
+        if isinstance(self._backend, BatchedDecoderOnlyBackend):
+            return self._backend.begin_batch(input_ids_batch)
+        return [self._backend.begin(input_ids) for input_ids in input_ids_batch]
+
+    def _step_batch(self, inputs: list[DecodeInput]) -> list[ModelOutput]:
+        if isinstance(self._backend, BatchedDecoderOnlyBackend):
+            return self._backend.step_batch(inputs)
+        return [self._backend.step(item.token_id, item.state) for item in inputs]
 
 
 def _validate_prompt_limits(input_ids: list[int], config: GenerationConfig) -> None:

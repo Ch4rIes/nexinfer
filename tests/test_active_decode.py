@@ -105,3 +105,49 @@ def test_interleaved_requests_decode_round_robin() -> None:
         tokenizer.token_id("c"),
         tokenizer.token_id("z"),
     ]
+
+
+def test_interleaved_requests_use_batched_backend_methods() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "x", "y", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+
+    class CountingBackend(BigramBackend):
+        def __init__(self) -> None:
+            super().__init__(
+                vocab_size=len(tokenizer),
+                transitions={
+                    tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+                    tokenizer.token_id("b"): {eos_id: 5.0},
+                    tokenizer.token_id("x"): {tokenizer.token_id("y"): 5.0},
+                    tokenizer.token_id("y"): {eos_id: 5.0},
+                },
+            )
+            self.begin_batch_calls = 0
+            self.step_batch_sizes: list[int] = []
+
+        def begin_batch(self, input_ids_batch):
+            self.begin_batch_calls += 1
+            return super().begin_batch(input_ids_batch)
+
+        def step_batch(self, inputs):
+            self.step_batch_sizes.append(len(inputs))
+            return super().step_batch(inputs)
+
+    backend = CountingBackend()
+    engine = LLMEngine(backend, tokenizer)
+    config = GenerationConfig(
+        max_new_tokens=8,
+        sampling=SamplingConfig(temperature=0),
+        stop_token_ids=(eos_id,),
+    )
+
+    results = engine.complete_requests_interleaved(
+        [
+            GenerationRequest("one", "a", config),
+            GenerationRequest("two", "x", config),
+        ]
+    )
+
+    assert [result.text for result in results] == ["b", "y"]
+    assert backend.begin_batch_calls == 1
+    assert backend.step_batch_sizes == [2]

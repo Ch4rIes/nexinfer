@@ -20,7 +20,7 @@ remote backends without rewriting sampling and stop handling.
 - streaming chunks
 - simple batch APIs
 - Nano-VLLM-style `LLM.generate` facade and `SamplingParams`
-- Nano-VLLM-style `LLMConfig` constructor surface
+- Nano-VLLM-style `Config`/`LLMConfig` constructor surface
 - optional `LLM` execution through `ModelRunner` and `Scheduler`
 - Nano-VLLM-style `Sequence` payload for scheduler/model-runner handoff
 - explicit sequence and decode state

@@ -90,3 +90,6 @@ class LLMConfig:
             revision=revision,
             max_context_tokens=self.max_model_len,
         )
+
+
+Config = LLMConfig

@@ -18,7 +18,7 @@ from nexinfer.errors import (
     NexInferError,
     SchedulerError,
 )
-from nexinfer.model import LLMConfig, ModelConfig
+from nexinfer.model import Config, LLMConfig, ModelConfig
 from nexinfer.llm import LLM, LLMOutput, LLMStepOutput
 from nexinfer.metrics import RuntimeStats
 from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
@@ -75,6 +75,7 @@ __all__ = [
     "ConfigurationError",
     "CompletedRequest",
     "Context",
+    "Config",
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",

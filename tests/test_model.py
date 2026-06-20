@@ -1,6 +1,6 @@
 import pytest
 
-from nexinfer import ConfigurationError, LLMConfig, ModelConfig
+from nexinfer import Config, ConfigurationError, LLMConfig, ModelConfig
 
 
 def test_model_config_accepts_loading_options() -> None:
@@ -44,6 +44,15 @@ def test_llm_config_matches_nano_vllm_defaults() -> None:
     assert config.eos == -1
     assert config.kvcache_block_size == 256
     assert config.num_kvcache_blocks == -1
+
+
+def test_config_alias_matches_nano_vllm_public_name() -> None:
+    config = Config("tiny", max_num_seqs=4)
+
+    assert Config is LLMConfig
+    assert isinstance(config, LLMConfig)
+    assert config.model == "tiny"
+    assert config.max_num_seqs == 4
 
 
 def test_llm_config_validates_scheduler_and_cache_limits() -> None:

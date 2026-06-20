@@ -35,6 +35,18 @@ def test_request_queue_preserves_request_config() -> None:
     assert request.config is config
 
 
+def test_request_queue_preserves_request_metadata() -> None:
+    queue = RequestQueue()
+
+    request = queue.submit(
+        "hello",
+        request_id="traceable",
+        metadata={"tenant": "demo", "trace": "abc"},
+    )
+
+    assert request.metadata == {"tenant": "demo", "trace": "abc"}
+
+
 def test_request_queue_cancels_pending_request() -> None:
     queue = RequestQueue()
     queue.submit("first", request_id="a")

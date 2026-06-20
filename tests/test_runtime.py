@@ -39,6 +39,14 @@ def test_runtime_executes_one_scheduled_batch() -> None:
     assert runtime.pending_requests == 1
 
 
+def test_runtime_preserves_submitted_metadata() -> None:
+    runtime = _runtime()
+
+    request = runtime.submit("a", request_id="one", metadata={"trace": "abc"})
+
+    assert request.metadata == {"trace": "abc"}
+
+
 def test_runtime_cancel_removes_pending_request() -> None:
     runtime = _runtime()
     runtime.submit("a", request_id="one")

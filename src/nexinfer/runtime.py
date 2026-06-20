@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from nexinfer.config import GenerationConfig
@@ -44,8 +45,14 @@ class InferenceRuntime:
         config: GenerationConfig | None = None,
         *,
         request_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> GenerationRequest:
-        return self._queue.submit(prompt, config, request_id=request_id)
+        return self._queue.submit(
+            prompt,
+            config,
+            request_id=request_id,
+            metadata=metadata,
+        )
 
     def cancel(self, request_id: str) -> bool:
         return self._queue.cancel(request_id)

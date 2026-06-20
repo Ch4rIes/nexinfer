@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
 
 from nexinfer.config import GenerationConfig
@@ -15,6 +16,7 @@ class GenerationRequest:
     request_id: str
     prompt: str
     config: GenerationConfig
+    metadata: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +46,7 @@ class RequestQueue:
         config: GenerationConfig | None = None,
         *,
         request_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._ids)}"
         if request_id in self._pending_ids:
@@ -53,6 +56,7 @@ class RequestQueue:
             request_id=request_id,
             prompt=prompt,
             config=config or GenerationConfig(),
+            metadata=dict(metadata or {}),
         )
         self._pending.append(request)
         self._pending_ids.add(request_id)

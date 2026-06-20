@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import fields, replace
+from itertools import count
 from typing import Any, TypedDict
 
+from nexinfer.cache import PrefixKVCacheBlockManager
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import ConfigurationError
 from nexinfer.model import LLMConfig, ModelConfig
 from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
+from nexinfer.runtime import InferenceRuntime
 from nexinfer.sampling_params import SamplingParams
 from nexinfer.tokenizer import HuggingFaceTokenizer
 
@@ -17,6 +20,9 @@ class LLMOutput(TypedDict):
 
     text: str
     token_ids: list[int]
+
+
+LLMStepOutput = tuple[list[tuple[int, list[int]]], int]
 
 
 class LLM:
@@ -61,6 +67,8 @@ class LLM:
         if eos_token_id is not None:
             self.config.eos = eos_token_id
         self.engine = LLMEngine(backend, tokenizer)
+        self._runtime = self._build_runtime()
+        self._request_ids = count()
 
     @property
     def tokenizer(self) -> Tokenizer:
@@ -92,6 +100,36 @@ class LLM:
             outputs.append({"text": result.text, "token_ids": result.token_ids})
         return outputs
 
+    def add_request(
+        self,
+        prompt: str | Sequence[int],
+        sampling_params: SamplingParams | None = None,
+    ) -> int:
+        """Add one request to the Nano-VLLM-style internal queue."""
+
+        request_id = next(self._request_ids)
+        config = (sampling_params or SamplingParams()).to_generation_config(
+            eos_token_id=_eos_token_id(self.tokenizer),
+            max_total_tokens=self.config.max_model_len,
+        )
+        self._runtime.submit(prompt, config, request_id=str(request_id))
+        return request_id
+
+    def step(self) -> LLMStepOutput:
+        """Run one scheduler step and return completed outputs plus token count."""
+
+        completed = self._runtime.run_once()
+        outputs = [
+            (int(item.request_id), item.result.generated_token_ids)
+            for item in completed
+        ]
+        return outputs, self._runtime.last_scheduled_tokens
+
+    def is_finished(self) -> bool:
+        """Return whether the internal request queue is empty."""
+
+        return self._runtime.pending_requests == 0
+
     def _normalize_sampling_params(
         self,
         sampling_params: SamplingParams | Sequence[SamplingParams] | None,
@@ -119,6 +157,21 @@ class LLM:
         tokenizer = HuggingFaceTokenizer.from_pretrained(config.model_name_or_path)
         backend = TorchCausalLMBackend.from_pretrained(config, **backend_kwargs)
         return backend, tokenizer
+
+    def _build_runtime(self) -> InferenceRuntime:
+        block_manager = None
+        if self.config.num_kvcache_blocks != -1:
+            block_manager = PrefixKVCacheBlockManager(
+                num_blocks=self.config.num_kvcache_blocks,
+                block_size=self.config.kvcache_block_size,
+            )
+        return InferenceRuntime(
+            self.engine,
+            max_batch_size=self.config.max_num_seqs,
+            max_batch_prompt_tokens=self.config.max_num_batched_tokens,
+            decode_strategy="continuous",
+            block_manager=block_manager,
+        )
 
 
 def _is_token_id_prompt(prompt: object) -> bool:

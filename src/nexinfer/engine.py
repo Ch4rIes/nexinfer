@@ -92,7 +92,7 @@ class LLMEngine:
     ) -> list[GenerationResult]:
         """Generate structured results for scheduled requests."""
 
-        return [self.complete(request.prompt, request.config) for request in requests]
+        return [self._complete_request(request) for request in requests]
 
     def complete_requests_interleaved(
         self,
@@ -114,7 +114,7 @@ class LLMEngine:
     def start_request(self, request: GenerationRequest) -> ActiveSequence:
         """Admit a scheduled request and run its prefill step."""
 
-        prompt_token_ids = self._tokenizer.encode(request.prompt)
+        prompt_token_ids = self._request_prompt_token_ids(request)
         _validate_prompt_limits(prompt_token_ids, request.config)
         sequence = SequenceState(prompt_token_ids=prompt_token_ids)
         max_new_tokens = _effective_max_new_tokens(prompt_token_ids, request.config)
@@ -153,7 +153,7 @@ class LLMEngine:
         prefill_indices: list[int] = []
 
         for request in requests:
-            prompt_token_ids = self._tokenizer.encode(request.prompt)
+            prompt_token_ids = self._request_prompt_token_ids(request)
             _validate_prompt_limits(prompt_token_ids, request.config)
             sequence = SequenceState(prompt_token_ids=prompt_token_ids)
             max_new_tokens = _effective_max_new_tokens(prompt_token_ids, request.config)
@@ -440,6 +440,16 @@ class LLMEngine:
             num_scheduled_tokens=active.num_scheduled_tokens,
             block_table=tuple(active.block_table or ()),
         )
+
+    def _complete_request(self, request: GenerationRequest) -> GenerationResult:
+        if request.prompt_token_ids is not None:
+            return self.complete_token_ids(request.prompt_token_ids, request.config)
+        return self.complete(request.prompt, request.config)
+
+    def _request_prompt_token_ids(self, request: GenerationRequest) -> list[int]:
+        if request.prompt_token_ids is not None:
+            return list(request.prompt_token_ids)
+        return self._tokenizer.encode(request.prompt)
 
 
 def _validate_prompt_limits(input_ids: list[int], config: GenerationConfig) -> None:

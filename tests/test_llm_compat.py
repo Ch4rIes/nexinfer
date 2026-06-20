@@ -199,3 +199,68 @@ def test_llm_rejects_config_object_with_explicit_tensor_parallel_size() -> None:
             config=LLMConfig("toy"),
             tensor_parallel_size=2,
         )
+
+
+def test_llm_queue_step_matches_nano_vllm_loop_shape() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "x", "y", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+            tokenizer.token_id("b"): {tokenizer.eos_token_id: 100.0},
+            tokenizer.token_id("x"): {tokenizer.token_id("y"): 100.0},
+            tokenizer.token_id("y"): {tokenizer.eos_token_id: 100.0},
+        },
+    )
+    llm = LLM(backend=backend, tokenizer=tokenizer, max_num_seqs=2)
+
+    first_id = llm.add_request(
+        "a",
+        SamplingParams(temperature=0.01, max_tokens=4),
+    )
+    second_id = llm.add_request(
+        "x",
+        SamplingParams(temperature=0.01, max_tokens=4),
+    )
+
+    assert (first_id, second_id) == (0, 1)
+    assert llm.is_finished() is False
+
+    outputs: dict[int, list[int]] = {}
+    token_counts: list[int] = []
+    while not llm.is_finished():
+        step_outputs, num_tokens = llm.step()
+        token_counts.append(num_tokens)
+        outputs.update(step_outputs)
+
+    assert token_counts[0] == 2
+    assert -2 in token_counts
+    assert outputs == {
+        first_id: [tokenizer.token_id("b")],
+        second_id: [tokenizer.token_id("y")],
+    }
+    assert llm.step() == ([], 0)
+
+
+def test_llm_queue_accepts_token_id_prompt_requests() -> None:
+    tokenizer = VocabularyTokenizer(["hello", "world", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("hello"): {tokenizer.token_id("world"): 100.0},
+            tokenizer.token_id("world"): {tokenizer.eos_token_id: 100.0},
+        },
+    )
+    llm = LLM(backend=backend, tokenizer=tokenizer)
+
+    request_id = llm.add_request(
+        [tokenizer.token_id("hello")],
+        SamplingParams(temperature=0.01, max_tokens=4),
+    )
+
+    outputs: dict[int, list[int]] = {}
+    while not llm.is_finished():
+        step_outputs, _ = llm.step()
+        outputs.update(step_outputs)
+
+    assert outputs == {request_id: [tokenizer.token_id("world")]}

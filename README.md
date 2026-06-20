@@ -90,6 +90,16 @@ print(outputs[0]["text"])
 print(outputs[0]["token_ids"])
 ```
 
+The facade also exposes Nano-VLLM-style queue stepping:
+
+```python
+request_id = llm.add_request("hello", SamplingParams(max_tokens=8))
+while not llm.is_finished():
+    completed, num_tokens = llm.step()
+    for seq_id, token_ids in completed:
+        print(seq_id, token_ids)
+```
+
 The cache module includes early block-table primitives for future paged KV-cache
 work. `PrefixKVCacheBlockManager` adds the Nano-VLLM-style pieces: ref-counted
 blocks, cached-prefix hashes, append reservation, and deallocation:

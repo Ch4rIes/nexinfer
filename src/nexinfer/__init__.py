@@ -17,7 +17,7 @@ from nexinfer.errors import (
     SchedulerError,
 )
 from nexinfer.model import LLMConfig, ModelConfig
-from nexinfer.llm import LLM, LLMOutput
+from nexinfer.llm import LLM, LLMOutput, LLMStepOutput
 from nexinfer.metrics import RuntimeStats
 from nexinfer.model_runner import (
     ModelRunnerContext,
@@ -76,6 +76,7 @@ __all__ = [
     "LLM",
     "LLMConfig",
     "LLMOutput",
+    "LLMStepOutput",
     "ModelOutput",
     "ModelConfig",
     "ModelRunnerContext",

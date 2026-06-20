@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import count
 from typing import Literal
@@ -60,6 +60,7 @@ class InferenceRuntime:
         )
         self._stats = RuntimeStats()
         self._request_ids = count(1)
+        self._last_scheduled_tokens = 0
 
     @property
     def pending_requests(self) -> int:
@@ -71,16 +72,29 @@ class InferenceRuntime:
     def stats(self) -> RuntimeStats:
         return self._stats
 
+    @property
+    def last_scheduled_tokens(self) -> int:
+        """Scheduler token count from the latest run_once call."""
+
+        return self._last_scheduled_tokens
+
     def submit(
         self,
-        prompt: str,
+        prompt: str | Sequence[int],
         config: GenerationConfig | None = None,
         *,
         request_id: str | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._request_ids)}"
-        prompt_token_ids = self._engine.tokenizer.encode(prompt)
+        if isinstance(prompt, str):
+            prompt_text = prompt
+            prompt_token_ids = tuple(self._engine.tokenizer.encode(prompt))
+            request_token_ids: tuple[int, ...] | None = None
+        else:
+            prompt_token_ids = tuple(int(token_id) for token_id in prompt)
+            prompt_text = self._engine.tokenizer.decode(prompt_token_ids)
+            request_token_ids = prompt_token_ids
         prompt_token_count = len(prompt_token_ids)
         metadata = dict(metadata or {})
         metadata.setdefault(
@@ -90,20 +104,22 @@ class InferenceRuntime:
         if self._decode_strategy == "continuous":
             request = GenerationRequest(
                 request_id=request_id,
-                prompt=prompt,
+                prompt=prompt_text,
                 config=config or GenerationConfig(),
                 metadata=metadata,
                 prompt_token_count=prompt_token_count,
+                prompt_token_ids=request_token_ids,
             )
             self._active_scheduler.add_request(request)
             return request
 
         return self._queue.submit(
-            prompt,
+            prompt_text,
             config,
             request_id=request_id,
             metadata=metadata,
             prompt_token_count=prompt_token_count,
+            prompt_token_ids=request_token_ids,
         )
 
     def cancel(self, request_id: str) -> bool:
@@ -119,6 +135,7 @@ class InferenceRuntime:
             max_requests=self._max_batch_size,
             max_prompt_tokens=self._max_batch_prompt_tokens,
         )
+        self._last_scheduled_tokens = batch.prompt_tokens
         requests = list(batch.requests)
         if self._decode_strategy == "interleaved":
             results = self._engine.complete_requests_interleaved(requests)
@@ -148,6 +165,7 @@ class InferenceRuntime:
 
     def _run_continuous_once(self) -> tuple[CompletedRequest, ...]:
         scheduled = self._active_scheduler.schedule()
+        self._last_scheduled_tokens = scheduled.num_tokens
         if scheduled.phase == "idle":
             return ()
 

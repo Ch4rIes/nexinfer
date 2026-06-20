@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from collections import deque
 from dataclasses import dataclass, field
 from itertools import count
@@ -18,6 +18,7 @@ class GenerationRequest:
     config: GenerationConfig
     metadata: Mapping[str, str] = field(default_factory=dict)
     prompt_token_count: int | None = None
+    prompt_token_ids: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +54,15 @@ class RequestQueue:
         request_id: str | None = None,
         metadata: Mapping[str, str] | None = None,
         prompt_token_count: int | None = None,
+        prompt_token_ids: Sequence[int] | None = None,
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._ids)}"
         if request_id in self._pending_ids:
             raise SchedulerError(f"duplicate request id: {request_id}")
+        if prompt_token_ids is not None:
+            prompt_token_ids = tuple(int(token_id) for token_id in prompt_token_ids)
+            if prompt_token_count is None:
+                prompt_token_count = len(prompt_token_ids)
         if prompt_token_count is not None and prompt_token_count < 0:
             raise SchedulerError("prompt_token_count must be non-negative when set")
 
@@ -66,6 +72,9 @@ class RequestQueue:
             config=config or GenerationConfig(),
             metadata=dict(metadata or {}),
             prompt_token_count=prompt_token_count,
+            prompt_token_ids=(
+                tuple(prompt_token_ids) if prompt_token_ids is not None else None
+            ),
         )
         self._pending.append(request)
         self._pending_ids.add(request_id)

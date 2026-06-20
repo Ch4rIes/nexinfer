@@ -74,6 +74,43 @@ def test_runtime_estimates_prompt_tokens_on_submit() -> None:
     assert request.prompt_token_count == 2
 
 
+def test_runtime_can_submit_token_id_prompts() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    eos_id = tokenizer.token_id("<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {eos_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=1,
+        decode_strategy="continuous",
+    )
+
+    request = runtime.submit(
+        [tokenizer.token_id("a")],
+        GenerationConfig(
+            max_new_tokens=4,
+            sampling=SamplingConfig(temperature=0),
+            stop_token_ids=(eos_id,),
+        ),
+        request_id="one",
+    )
+    completed = runtime.run_until_idle()
+
+    assert request.prompt_token_ids == (tokenizer.token_id("a"),)
+    assert request.prompt_token_count == 1
+    assert request.metadata["token_ids"] == str(tokenizer.token_id("a"))
+    assert [item.request_id for item in completed] == ["one"]
+    assert [item.result.generated_token_ids for item in completed] == [
+        [tokenizer.token_id("b")]
+    ]
+
+
 def test_runtime_cancel_removes_pending_request() -> None:
     runtime = _runtime()
     runtime.submit("a", request_id="one")

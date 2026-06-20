@@ -24,6 +24,7 @@ class SamplingParams:
         self,
         *,
         eos_token_id: int | None = None,
+        max_total_tokens: int | None = None,
     ) -> GenerationConfig:
         stop_token_ids: tuple[int, ...]
         if self.ignore_eos or eos_token_id is None:
@@ -33,6 +34,7 @@ class SamplingParams:
 
         return GenerationConfig(
             max_new_tokens=self.max_tokens,
+            max_total_tokens=max_total_tokens,
             sampling=SamplingConfig(temperature=self.temperature),
             stop_token_ids=stop_token_ids,
         )

@@ -1,6 +1,12 @@
 import pytest
 
-from nexinfer import ConfigurationError, LLM, SamplingParams, VocabularyTokenizer
+from nexinfer import (
+    ConfigurationError,
+    LLM,
+    LLMConfig,
+    SamplingParams,
+    VocabularyTokenizer,
+)
 from nexinfer.backends import BigramBackend
 
 
@@ -110,3 +116,86 @@ def test_llm_rejects_unsupported_tensor_parallel_size() -> None:
 
     with pytest.raises(ConfigurationError, match="tensor_parallel_size"):
         LLM(backend=backend, tokenizer=tokenizer, tensor_parallel_size=2)
+
+
+def test_llm_accepts_nano_vllm_config_kwargs() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+            tokenizer.token_id("b"): {tokenizer.token_id("c"): 100.0},
+            tokenizer.token_id("c"): {tokenizer.eos_token_id: 100.0},
+        },
+    )
+
+    llm = LLM(
+        backend=backend,
+        tokenizer=tokenizer,
+        max_num_batched_tokens=512,
+        max_num_seqs=4,
+        max_model_len=2,
+        gpu_memory_utilization=0.5,
+        enforce_eager=True,
+        kvcache_block_size=256,
+        num_kvcache_blocks=8,
+    )
+
+    assert llm.config.max_num_batched_tokens == 512
+    assert llm.config.max_num_seqs == 4
+    assert llm.config.max_model_len == 2
+    assert llm.config.gpu_memory_utilization == 0.5
+    assert llm.config.enforce_eager is True
+    assert llm.config.eos == tokenizer.eos_token_id
+    assert llm.config.num_kvcache_blocks == 8
+
+    outputs = llm.generate(
+        ["a"],
+        SamplingParams(temperature=0.01, max_tokens=4),
+        use_tqdm=False,
+    )
+
+    assert outputs == [{"text": "b", "token_ids": [tokenizer.token_id("b")]}]
+
+
+def test_llm_accepts_explicit_config_object() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+        },
+    )
+    config = LLMConfig("toy", max_num_seqs=2, enforce_eager=True)
+
+    llm = LLM(backend=backend, tokenizer=tokenizer, config=config)
+
+    assert llm.config is config
+    assert llm.enforce_eager is True
+    assert llm.config.eos == tokenizer.eos_token_id
+
+
+def test_llm_rejects_config_object_with_config_kwargs() -> None:
+    tokenizer = VocabularyTokenizer(["a"])
+    backend = BigramBackend(vocab_size=len(tokenizer))
+
+    with pytest.raises(ConfigurationError, match="config kwargs"):
+        LLM(
+            backend=backend,
+            tokenizer=tokenizer,
+            config=LLMConfig("toy"),
+            max_num_seqs=2,
+        )
+
+
+def test_llm_rejects_config_object_with_explicit_tensor_parallel_size() -> None:
+    tokenizer = VocabularyTokenizer(["a"])
+    backend = BigramBackend(vocab_size=len(tokenizer))
+
+    with pytest.raises(ConfigurationError, match="tensor_parallel_size"):
+        LLM(
+            backend=backend,
+            tokenizer=tokenizer,
+            config=LLMConfig("toy"),
+            tensor_parallel_size=2,
+        )

@@ -16,7 +16,7 @@ from nexinfer.errors import (
     NexInferError,
     SchedulerError,
 )
-from nexinfer.model import ModelConfig
+from nexinfer.model import LLMConfig, ModelConfig
 from nexinfer.llm import LLM, LLMOutput
 from nexinfer.metrics import RuntimeStats
 from nexinfer.model_runner import (
@@ -74,6 +74,7 @@ __all__ = [
     "KVCacheBlockAllocator",
     "LLMEngine",
     "LLM",
+    "LLMConfig",
     "LLMOutput",
     "ModelOutput",
     "ModelConfig",

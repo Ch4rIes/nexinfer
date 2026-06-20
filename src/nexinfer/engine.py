@@ -11,11 +11,12 @@ from nexinfer.protocols import (
     DecodeState,
     DecoderOnlyBackend,
     ModelOutput,
+    PrefillInput,
     Tokenizer,
 )
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
-from nexinfer.scheduler import ActiveSequence, GenerationRequest
+from nexinfer.scheduler import ActiveSequence, GenerationRequest, ScheduledSequence
 from nexinfer.state import SequenceState
 
 
@@ -123,11 +124,16 @@ class LLMEngine:
             stop_token_ids=set(request.config.stop_token_ids),
         )
 
-    def start_requests(self, requests: list[GenerationRequest]) -> list[ActiveSequence]:
+    def start_requests(
+        self,
+        requests: list[GenerationRequest],
+        scheduled: dict[str, ScheduledSequence] | None = None,
+    ) -> list[ActiveSequence]:
         """Admit scheduled requests and batch their prefill step when possible."""
 
+        scheduled = scheduled or {}
         active_sequences: list[ActiveSequence] = []
-        prefill_prompts: list[list[int]] = []
+        prefill_inputs: list[PrefillInput] = []
         prefill_indices: list[int] = []
 
         for request in requests:
@@ -143,16 +149,17 @@ class LLMEngine:
                 max_new_tokens=max_new_tokens,
                 stop_token_ids=set(request.config.stop_token_ids),
             )
+            self._apply_scheduled_metadata(active, scheduled.get(request.request_id))
             active_sequences.append(active)
             if max_new_tokens == 0:
                 sequence.finish("length")
             else:
-                prefill_prompts.append(prompt_token_ids)
+                prefill_inputs.append(self._prefill_input(active))
                 prefill_indices.append(len(active_sequences) - 1)
 
-        if prefill_prompts:
-            outputs = self._begin_batch(prefill_prompts)
-            if len(outputs) != len(prefill_prompts):
+        if prefill_inputs:
+            outputs = self._begin_batch(prefill_inputs)
+            if len(outputs) != len(prefill_inputs):
                 raise BackendError("backend returned wrong number of prefill outputs")
             for active_index, output in zip(prefill_indices, outputs, strict=True):
                 _validate_model_output(output, self._backend.vocab_size)
@@ -163,19 +170,22 @@ class LLMEngine:
     def prefill_active_sequences(
         self,
         active_sequences: list[ActiveSequence],
+        scheduled: dict[str, ScheduledSequence] | None = None,
     ) -> list[ActiveSequence]:
         """Re-prefill preempted active sequences from their current token history."""
 
-        prefill_inputs: list[list[int]] = []
+        scheduled = scheduled or {}
+        prefill_inputs: list[PrefillInput] = []
         prefill_indices: list[int] = []
         for index, active in enumerate(active_sequences):
+            self._apply_scheduled_metadata(active, scheduled.get(active.request_id))
             if active.is_finished:
                 continue
             if active.sequence.completion_tokens >= active.max_new_tokens:
                 active.sequence.finish("length")
                 active.output = None
                 continue
-            prefill_inputs.append(active.sequence.token_ids)
+            prefill_inputs.append(self._prefill_input(active))
             prefill_indices.append(index)
 
         if prefill_inputs:
@@ -255,7 +265,15 @@ class LLMEngine:
                 active.output = None
                 continue
 
-            decode_inputs.append(DecodeInput(token_id=token_id, state=active.output.state))
+            decode_inputs.append(
+                DecodeInput(
+                    token_id=token_id,
+                    state=active.output.state,
+                    block_table=tuple(active.block_table or ()),
+                    context_length=active.sequence.next_position,
+                    num_scheduled_tokens=active.num_scheduled_tokens or 1,
+                )
+            )
             decode_indices.append(index)
 
         if decode_inputs:
@@ -373,15 +391,39 @@ class LLMEngine:
             ),
         )
 
-    def _begin_batch(self, input_ids_batch: list[list[int]]) -> list[ModelOutput]:
+    def _begin_batch(self, inputs: list[PrefillInput]) -> list[ModelOutput]:
         if isinstance(self._backend, BatchedDecoderOnlyBackend):
-            return self._backend.begin_batch(input_ids_batch)
-        return [self._backend.begin(input_ids) for input_ids in input_ids_batch]
+            return self._backend.begin_batch(inputs)
+        return [self._backend.begin(item.token_ids) for item in inputs]
 
     def _step_batch(self, inputs: list[DecodeInput]) -> list[ModelOutput]:
         if isinstance(self._backend, BatchedDecoderOnlyBackend):
             return self._backend.step_batch(inputs)
         return [self._backend.step(item.token_id, item.state) for item in inputs]
+
+    def _apply_scheduled_metadata(
+        self,
+        active: ActiveSequence,
+        scheduled: ScheduledSequence | None,
+    ) -> None:
+        if scheduled is None:
+            active.num_cached_tokens = 0
+            active.num_scheduled_tokens = len(active.sequence.token_ids)
+            active.is_prefill = True
+            return
+
+        active.num_cached_tokens = scheduled.num_cached_tokens
+        active.num_scheduled_tokens = scheduled.num_scheduled_tokens
+        active.block_table = list(scheduled.block_table)
+        active.is_prefill = scheduled.is_prefill
+
+    def _prefill_input(self, active: ActiveSequence) -> PrefillInput:
+        return PrefillInput(
+            token_ids=active.sequence.token_ids,
+            num_cached_tokens=active.num_cached_tokens,
+            num_scheduled_tokens=active.num_scheduled_tokens,
+            block_table=tuple(active.block_table or ()),
+        )
 
 
 def _validate_prompt_limits(input_ids: list[int], config: GenerationConfig) -> None:

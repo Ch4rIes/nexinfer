@@ -152,10 +152,17 @@ class InferenceRuntime:
             return ()
 
         if scheduled.phase == "prefill":
+            scheduled_by_id = {
+                item.request_id: item for item in scheduled.scheduled_sequences
+            }
             active_sequences = (
-                *self._engine.start_requests(list(scheduled.requests)),
+                *self._engine.start_requests(
+                    list(scheduled.requests),
+                    scheduled=scheduled_by_id,
+                ),
                 *self._engine.prefill_active_sequences(
-                    list(scheduled.active_sequences)
+                    list(scheduled.active_sequences),
+                    scheduled=scheduled_by_id,
                 ),
             )
             finished = self._active_scheduler.postprocess_prefill(active_sequences)

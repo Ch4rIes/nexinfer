@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from nexinfer.protocols import DecodeInput, DecodeState, ModelOutput
+from nexinfer.protocols import DecodeInput, DecodeState, ModelOutput, PrefillInput
 
 
 class BigramBackend:
@@ -35,8 +35,11 @@ class BigramBackend:
             ),
         )
 
-    def begin_batch(self, input_ids_batch: Sequence[Sequence[int]]) -> list[ModelOutput]:
-        return [self.begin(input_ids) for input_ids in input_ids_batch]
+    def begin_batch(
+        self,
+        inputs: Sequence[PrefillInput | Sequence[int]],
+    ) -> list[ModelOutput]:
+        return [self.begin(_prefill_token_ids(item)) for item in inputs]
 
     def step(self, token_id: int, state: DecodeState) -> ModelOutput:
         return ModelOutput(
@@ -58,3 +61,9 @@ class BigramBackend:
                 raise ValueError(f"transition token id out of range: {token_id}")
             logits[token_id] = logit
         return logits
+
+
+def _prefill_token_ids(item: PrefillInput | Sequence[int]) -> Sequence[int]:
+    if isinstance(item, PrefillInput):
+        return item.token_ids
+    return item

@@ -15,17 +15,35 @@ WaitingEntry = GenerationRequest | ActiveSequence
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduledSequence:
+    """Per-sequence scheduling metadata for the current phase."""
+
+    request_id: str
+    num_cached_tokens: int
+    num_scheduled_tokens: int
+    block_table: tuple[int, ...] = ()
+    is_prefill: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ScheduledActiveBatch:
     """A scheduler decision for one prefill or decode phase."""
 
     phase: SchedulePhase
     requests: tuple[GenerationRequest, ...] = ()
     active_sequences: tuple[ActiveSequence, ...] = ()
+    scheduled_sequences: tuple[ScheduledSequence, ...] = ()
     num_tokens: int = 0
     cached_tokens: int = 0
 
     def __len__(self) -> int:
         return len(self.requests) + len(self.active_sequences)
+
+    def metadata_for(self, request_id: str) -> ScheduledSequence | None:
+        for item in self.scheduled_sequences:
+            if item.request_id == request_id:
+                return item
+        return None
 
 
 class ActiveScheduler:
@@ -128,6 +146,7 @@ class ActiveScheduler:
 
         requests: list[GenerationRequest] = []
         active_sequences: list[ActiveSequence] = []
+        scheduled_sequences: list[ScheduledSequence] = []
         num_tokens = 0
         cached_tokens = 0
         while (
@@ -176,6 +195,15 @@ class ActiveScheduler:
             self._hash_prefill_progress(entry, progress)
             num_tokens += scheduled_tokens
             cached_tokens += cached_tokens_for_entry
+            scheduled_sequences.append(
+                ScheduledSequence(
+                    request_id=next_entry_id,
+                    num_cached_tokens=progress - scheduled_tokens,
+                    num_scheduled_tokens=scheduled_tokens,
+                    block_table=self._block_table(next_entry_id),
+                    is_prefill=True,
+                )
+            )
 
             if progress >= next_tokens:
                 entry = self._waiting.popleft()
@@ -194,6 +222,7 @@ class ActiveScheduler:
             phase="prefill",
             requests=tuple(requests),
             active_sequences=tuple(active_sequences),
+            scheduled_sequences=tuple(scheduled_sequences),
             num_tokens=num_tokens,
             cached_tokens=cached_tokens,
         )
@@ -212,6 +241,9 @@ class ActiveScheduler:
                     break
             else:
                 self._reserve_append(active)
+                active.num_cached_tokens = 0
+                active.num_scheduled_tokens = 1
+                active.is_prefill = False
                 active_sequences.append(active)
 
             if self._entry_is_waiting(active.request_id):
@@ -222,6 +254,16 @@ class ActiveScheduler:
         return ScheduledActiveBatch(
             phase="decode",
             active_sequences=tuple(active_sequences),
+            scheduled_sequences=tuple(
+                ScheduledSequence(
+                    request_id=active.request_id,
+                    num_cached_tokens=0,
+                    num_scheduled_tokens=1,
+                    block_table=tuple(active.block_table or ()),
+                    is_prefill=False,
+                )
+                for active in active_sequences
+            ),
             num_tokens=-len(active_sequences),
         )
 
@@ -292,6 +334,11 @@ class ActiveScheduler:
             return
         allocation = self._block_manager.allocation(active.request_id)
         active.block_table = list(allocation.block_table)
+
+    def _block_table(self, request_id: str) -> tuple[int, ...]:
+        if self._block_manager is None or request_id not in self._allocated_ids:
+            return ()
+        return tuple(self._block_manager.allocation(request_id).block_table)
 
     def _hash_blocks(self, active: ActiveSequence) -> None:
         if self._block_manager is None:

@@ -1,6 +1,13 @@
-from nexinfer import GenerationConfig, GenerationRequest, LLMEngine, SamplingConfig
+from nexinfer import (
+    GenerationConfig,
+    GenerationRequest,
+    LLMEngine,
+    PrefixKVCacheBlockManager,
+    SamplingConfig,
+)
 from nexinfer.backends import BigramBackend
-from nexinfer.protocols import DecodeState, ModelOutput
+from nexinfer.protocols import DecodeInput, DecodeState, ModelOutput, PrefillInput
+from nexinfer.scheduler import ActiveScheduler
 from nexinfer.tokenizer import VocabularyTokenizer
 
 
@@ -151,3 +158,64 @@ def test_interleaved_requests_use_batched_backend_methods() -> None:
     assert [result.text for result in results] == ["b", "y"]
     assert backend.begin_batch_calls == 1
     assert backend.step_batch_sizes == [2]
+
+
+def test_scheduled_metadata_reaches_backend_inputs() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "d"])
+
+    class InspectingBackend(BigramBackend):
+        def __init__(self) -> None:
+            super().__init__(
+                vocab_size=len(tokenizer),
+                transitions={
+                    tokenizer.token_id("c"): {tokenizer.token_id("d"): 5.0},
+                },
+            )
+            self.prefill_inputs: list[PrefillInput] = []
+            self.decode_inputs: list[DecodeInput] = []
+
+        def begin_batch(self, inputs):
+            self.prefill_inputs.extend(inputs)
+            return super().begin_batch(inputs)
+
+        def step_batch(self, inputs):
+            self.decode_inputs.extend(inputs)
+            return super().step_batch(inputs)
+
+    backend = InspectingBackend()
+    engine = LLMEngine(backend, tokenizer)
+    block_manager = PrefixKVCacheBlockManager(num_blocks=4, block_size=2)
+    scheduler = ActiveScheduler(
+        max_num_seqs=1,
+        max_num_batched_tokens=2,
+        block_manager=block_manager,
+    )
+    request = GenerationRequest(
+        request_id="one",
+        prompt="a b c",
+        config=GenerationConfig(
+            max_new_tokens=2,
+            sampling=SamplingConfig(temperature=0),
+        ),
+        metadata={
+            "token_ids": ",".join(str(token_id) for token_id in tokenizer.encode("a b c"))
+        },
+        prompt_token_count=3,
+    )
+    scheduler.add_request(request)
+
+    first = scheduler.schedule()
+    assert first.requests == ()
+    second = scheduler.schedule()
+    scheduled = {item.request_id: item for item in second.scheduled_sequences}
+    active = tuple(engine.start_requests(list(second.requests), scheduled=scheduled))
+    scheduler.postprocess_prefill(active)
+    decode = scheduler.schedule()
+    engine.decode_active_batch(list(decode.active_sequences))
+
+    assert backend.prefill_inputs[-1].num_cached_tokens == 2
+    assert backend.prefill_inputs[-1].num_scheduled_tokens == 1
+    assert tuple(backend.prefill_inputs[-1].block_table) == (0, 1)
+    assert backend.decode_inputs[-1].num_scheduled_tokens == 1
+    assert backend.decode_inputs[-1].context_length == 4
+    assert tuple(backend.decode_inputs[-1].block_table) == (0, 1)

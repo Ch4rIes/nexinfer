@@ -266,6 +266,20 @@ def test_active_scheduler_chunks_prefill_larger_than_token_budget() -> None:
     assert second.requests == ()
     assert third.num_tokens == 1
     assert [request.request_id for request in third.requests] == ["one"]
+    assert [
+        item.num_scheduled_tokens for item in (
+            *first.scheduled_sequences,
+            *second.scheduled_sequences,
+            *third.scheduled_sequences,
+        )
+    ] == [2, 2, 1]
+    assert [
+        item.num_cached_tokens for item in (
+            *first.scheduled_sequences,
+            *second.scheduled_sequences,
+            *third.scheduled_sequences,
+        )
+    ] == [0, 2, 4]
     assert scheduler.waiting_count == 0
 
 

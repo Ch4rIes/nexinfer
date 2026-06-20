@@ -24,6 +24,7 @@ from nexinfer.protocols import (
     DecodeState,
     DecoderOnlyBackend,
     ModelOutput,
+    PrefillInput,
     Tokenizer,
 )
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
@@ -36,6 +37,7 @@ from nexinfer.scheduler import (
     RequestQueue,
     ScheduledActiveBatch,
     ScheduledBatch,
+    ScheduledSequence,
     SchedulePhase,
 )
 from nexinfer.state import SequenceState
@@ -65,6 +67,7 @@ __all__ = [
     "ModelOutput",
     "ModelConfig",
     "NexInferError",
+    "PrefillInput",
     "ManagedKVCacheAllocation",
     "ManagedKVCacheBlock",
     "PrefixKVCacheBlockManager",
@@ -74,6 +77,7 @@ __all__ = [
     "ScheduledActiveBatch",
     "RuntimeStats",
     "ScheduledBatch",
+    "ScheduledSequence",
     "SchedulePhase",
     "SchedulerError",
     "SequenceState",

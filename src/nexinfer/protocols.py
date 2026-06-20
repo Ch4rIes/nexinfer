@@ -22,11 +22,30 @@ class ModelOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class PrefillInput:
+    """One scheduled prefill item for a backend batch."""
+
+    token_ids: Sequence[int]
+    num_cached_tokens: int = 0
+    num_scheduled_tokens: int | None = None
+    block_table: Sequence[int] = ()
+
+    @property
+    def scheduled_token_count(self) -> int:
+        if self.num_scheduled_tokens is not None:
+            return self.num_scheduled_tokens
+        return max(len(self.token_ids) - self.num_cached_tokens, 0)
+
+
+@dataclass(frozen=True, slots=True)
 class DecodeInput:
     """One token and decode state to advance in a backend batch."""
 
     token_id: int
     state: DecodeState
+    block_table: Sequence[int] = ()
+    context_length: int | None = None
+    num_scheduled_tokens: int = 1
 
 
 @runtime_checkable
@@ -48,7 +67,7 @@ class DecoderOnlyBackend(Protocol):
 class BatchedDecoderOnlyBackend(DecoderOnlyBackend, Protocol):
     """Optional backend contract for grouped prefill and decode calls."""
 
-    def begin_batch(self, input_ids_batch: Sequence[Sequence[int]]) -> list[ModelOutput]:
+    def begin_batch(self, inputs: Sequence[PrefillInput]) -> list[ModelOutput]:
         """Return next-token logits for a group of prompts."""
 
     def step_batch(self, inputs: Sequence[DecodeInput]) -> list[ModelOutput]:

@@ -19,6 +19,9 @@ class ActiveSequence:
     max_new_tokens: int
     stop_token_ids: set[int]
     block_table: list[int] | None = None
+    num_cached_tokens: int = 0
+    num_scheduled_tokens: int = 0
+    is_prefill: bool = True
 
     @property
     def request_id(self) -> str:

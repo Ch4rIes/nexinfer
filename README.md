@@ -19,7 +19,7 @@ remote backends without rewriting sampling and stop handling.
 - streaming chunks
 - simple batch APIs
 - explicit sequence and decode state
-- optional batched backend prefill/decode contract
+- optional batched backend prefill/decode contract with scheduled-token metadata
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters
@@ -126,6 +126,9 @@ the active scheduler can preempt a running sequence, free its blocks, and move i
 back to waiting for a later prefill phase. Prompts larger than
 `max_batch_prompt_tokens` are admitted through chunked prefill phases; the current
 backend path runs model prefill when the final prompt chunk is admitted.
+Backend batch inputs carry the scheduled token count, cached-token count, and
+block table so future tensor runners can prepare prefill/decode contexts in the
+same shape as Nano-VLLM.
 
 ## Optional integrations
 
@@ -165,7 +168,6 @@ Mid-term:
 
 - connect `DecodeState.cache` to real KV-cache tensors
 - replace toy batch methods with real tensor-batched model runner calls
-- wire block tables into backend decode state
 
 Later:
 

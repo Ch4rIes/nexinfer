@@ -627,6 +627,15 @@ def test_model_runner_capture_cudagraph_records_buffer_plan() -> None:
         "outputs": (40, 16),
     }
     assert runner.graph_bs == plan.batch_sizes
+    assert sorted(runner.graphs) == [1, 2, 4, 8, 16, 32]
+    assert runner.graph_pool is None
+    assert runner.graph_vars["input_ids"] == [0] * 40
+    assert runner.graph_vars["positions"] == [0] * 40
+    assert runner.graph_vars["slot_mapping"] == [0] * 40
+    assert runner.graph_vars["context_lens"] == [0] * 40
+    assert len(runner.graph_vars["block_tables"]) == 40
+    assert runner.graph_vars["block_tables"][0] == [0, 0, 0, 0, 0]
+    assert runner.graph_vars["outputs"] == {"shape": (40, 16)}
     assert runner.graph_capture_plan == plan
 
 
@@ -662,29 +671,48 @@ def test_model_runner_records_cudagraph_replay_plan_for_decode() -> None:
     second = Sequence([20], SamplingParams(temperature=1.0))
     second.num_scheduled_tokens = 1
     second.block_table.extend([5])
+    third = Sequence([30, 31], SamplingParams(temperature=1.0))
+    third.append_token(32)
+    third.num_scheduled_tokens = 1
+    third.block_table.extend([6, 7])
     runner = ModelRunner(
-        FakeModel([[0.0, 10.0], [0.0, 10.0]]),
+        FakeModel([[0.0, 10.0], [0.0, 10.0], [0.0, 10.0]]),
         block_size=2,
         sampler=Sampler(FixedRaceRng()),
         config=SimpleNamespace(
-            max_num_seqs=40,
-            max_model_len=33,
+            max_num_seqs=8,
+            max_model_len=8,
             enforce_eager=False,
         ),
     )
     runner.capture_cudagraph()
 
-    assert runner.run([first, second], is_prefill=False) == [1, 1]
+    assert runner.run([first, second, third], is_prefill=False) == [1, 1, 1]
 
     replay = runner.last_graph_replay
     assert isinstance(replay, CUDAGraphReplayPlan)
-    assert replay.batch_size == 2
-    assert replay.graph_batch_size == 2
-    assert replay.input_ids == [12, 20]
-    assert replay.positions == [2, 0]
-    assert replay.slot_mapping == [8, 10]
-    assert replay.context_lengths == [3, 1]
-    assert replay.block_tables == [[3, 4], [5, -1]]
+    assert replay.batch_size == 3
+    assert replay.graph_batch_size == 4
+    assert replay.input_ids == [12, 20, 32]
+    assert replay.positions == [2, 0, 2]
+    assert replay.slot_mapping == [8, 10, 14]
+    assert replay.context_lengths == [3, 1, 3]
+    assert replay.block_tables == [[3, 4], [5, -1], [6, 7]]
+    assert replay.padded_input_ids == [12, 20, 32, 0]
+    assert replay.padded_positions == [2, 0, 2, 0]
+    assert replay.padded_slot_mapping == [8, 10, 14, -1]
+    assert replay.padded_context_lengths == [3, 1, 3, 0]
+    assert replay.padded_block_tables == [
+        [3, 4, 0, 0],
+        [5, -1, 0, 0],
+        [6, 7, 0, 0],
+        [0, 0, 0, 0],
+    ]
+    assert runner.graph_vars["input_ids"][:4] == replay.padded_input_ids
+    assert runner.graph_vars["positions"][:4] == replay.padded_positions
+    assert runner.graph_vars["slot_mapping"][:4] == replay.padded_slot_mapping
+    assert runner.graph_vars["context_lens"][:4] == replay.padded_context_lengths
+    assert runner.graph_vars["block_tables"][:4] == replay.padded_block_tables
 
 
 def test_model_runner_skips_cudagraph_replay_for_prefill_and_eager_mode() -> None:

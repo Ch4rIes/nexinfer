@@ -91,6 +91,11 @@ class CUDAGraphReplayPlan:
     slot_mapping: list[int]
     context_lengths: list[int]
     block_tables: list[list[int]]
+    padded_input_ids: list[int]
+    padded_positions: list[int]
+    padded_slot_mapping: list[int]
+    padded_context_lengths: list[int]
+    padded_block_tables: list[list[int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +176,9 @@ class ModelRunner:
         self.kv_cache: Any | None = None
         self.kv_cache_shape: tuple[int, ...] | None = None
         self.graph_bs: list[int] = []
+        self.graphs: dict[int, object | None] = {}
+        self.graph_pool: object | None = None
+        self.graph_vars: dict[str, Any] = {}
         self.graph_capture_plan: CUDAGraphCapturePlan | None = None
 
     def call(self, method_name: str, *args: Any) -> Any:
@@ -299,6 +307,9 @@ class ModelRunner:
             buffer_shapes=buffer_shapes,
         )
         self.graph_bs = batch_sizes
+        self.graphs = {batch_size: None for batch_size in reversed(batch_sizes)}
+        self.graph_pool = None
+        self.graph_vars = _empty_cudagraph_vars(plan)
         self.graph_capture_plan = plan
         return plan
 
@@ -410,6 +421,14 @@ class ModelRunner:
             raise ConfigurationError("decode context is required for CUDA graph replay")
         if context.context_lengths is None:
             raise ConfigurationError("decode context lengths are required")
+        padded = self._copy_cudagraph_vars(
+            graph_batch_size=graph_batch_size,
+            input_ids=input_ids,
+            positions=positions,
+            slot_mapping=context.slot_mapping,
+            context_lengths=context.context_lengths,
+            block_tables=context.block_tables,
+        )
 
         return CUDAGraphReplayPlan(
             batch_size=batch_size,
@@ -419,6 +438,11 @@ class ModelRunner:
             slot_mapping=list(context.slot_mapping),
             context_lengths=list(context.context_lengths),
             block_tables=[list(row) for row in context.block_tables],
+            padded_input_ids=padded["input_ids"],
+            padded_positions=padded["positions"],
+            padded_slot_mapping=padded["slot_mapping"],
+            padded_context_lengths=padded["context_lens"],
+            padded_block_tables=padded["block_tables"],
         )
 
     def _set_prefill_context(self, batch: PreparedPrefillBatch) -> None:
@@ -453,6 +477,60 @@ class ModelRunner:
             if graph_batch_size >= batch_size:
                 return graph_batch_size
         raise ConfigurationError("batch size exceeds captured CUDA graph plan")
+
+    def _copy_cudagraph_vars(
+        self,
+        *,
+        graph_batch_size: int,
+        input_ids: SequenceCollection[int],
+        positions: SequenceCollection[int],
+        slot_mapping: SequenceCollection[int],
+        context_lengths: SequenceCollection[int],
+        block_tables: SequenceCollection[SequenceCollection[int]],
+    ) -> dict[str, Any]:
+        if self.graph_capture_plan is None or not self.graph_vars:
+            raise ConfigurationError("CUDA graph capture buffers are required")
+
+        capacity = len(self.graph_vars["input_ids"])
+        max_num_blocks = self.graph_capture_plan.max_num_blocks
+        if graph_batch_size > capacity:
+            raise ConfigurationError("graph batch size exceeds graph variable capacity")
+
+        self.graph_vars["input_ids"] = [0] * capacity
+        self.graph_vars["positions"] = [0] * capacity
+        self.graph_vars["slot_mapping"] = [-1] * capacity
+        self.graph_vars["context_lens"] = [0] * capacity
+        self.graph_vars["block_tables"] = [
+            [0] * max_num_blocks for _ in range(capacity)
+        ]
+
+        self.graph_vars["input_ids"][: len(input_ids)] = [
+            int(token_id) for token_id in input_ids
+        ]
+        self.graph_vars["positions"][: len(positions)] = [
+            int(position) for position in positions
+        ]
+        self.graph_vars["slot_mapping"][: len(slot_mapping)] = [
+            int(slot) for slot in slot_mapping
+        ]
+        self.graph_vars["context_lens"][: len(context_lengths)] = [
+            int(length) for length in context_lengths
+        ]
+        for row_index, row in enumerate(block_tables):
+            if row_index >= capacity:
+                break
+            copied = [int(block_id) for block_id in row[:max_num_blocks]]
+            self.graph_vars["block_tables"][row_index][: len(copied)] = copied
+
+        return {
+            "input_ids": list(self.graph_vars["input_ids"][:graph_batch_size]),
+            "positions": list(self.graph_vars["positions"][:graph_batch_size]),
+            "slot_mapping": list(self.graph_vars["slot_mapping"][:graph_batch_size]),
+            "context_lens": list(self.graph_vars["context_lens"][:graph_batch_size]),
+            "block_tables": [
+                list(row) for row in self.graph_vars["block_tables"][:graph_batch_size]
+            ],
+        }
 
 
 class ModelRunnerGroup:
@@ -701,6 +779,24 @@ def _resolve_enforce_eager(enforce_eager: bool | None, config: Any | None) -> bo
     if config is None:
         return False
     return bool(getattr(config, "enforce_eager", False))
+
+
+def _empty_cudagraph_vars(plan: CUDAGraphCapturePlan) -> dict[str, Any]:
+    capacity = max(plan.max_batch_size, max(plan.batch_sizes, default=0))
+    graph_vars: dict[str, Any] = {
+        "input_ids": [0] * capacity,
+        "positions": [0] * capacity,
+        "slot_mapping": [0] * capacity,
+        "context_lens": [0] * capacity,
+        "block_tables": [
+            [0] * plan.max_num_blocks for _ in range(capacity)
+        ],
+    }
+    if plan.hidden_size is not None:
+        graph_vars["outputs"] = {
+            "shape": (capacity, plan.hidden_size),
+        }
+    return graph_vars
 
 
 def _positive_config_int(config: Any, name: str) -> int:

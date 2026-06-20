@@ -25,6 +25,7 @@ from nexinfer.loader import default_weight_loader, load_model
 from nexinfer.metrics import RuntimeStats
 from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
 from nexinfer.model_runner import (
+    CUDAGraphCapturePlan,
     ModelRunner,
     ModelRunnerContext,
     PreparedDecodeBatch,
@@ -82,6 +83,7 @@ __all__ = [
     "CompletedRequest",
     "Context",
     "Config",
+    "CUDAGraphCapturePlan",
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",

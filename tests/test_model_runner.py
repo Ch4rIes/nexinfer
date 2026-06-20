@@ -6,6 +6,7 @@ import pytest
 from nexinfer import (
     ConfigurationError,
     Context,
+    CUDAGraphCapturePlan,
     DecodeInput,
     DecodeState,
     KVCacheLayout,
@@ -565,6 +566,57 @@ def test_model_runner_allocate_kv_cache_uses_explicit_head_dim() -> None:
     runner.allocate_kv_cache(config)
 
     assert runner.kv_cache_shape == (2, 1, 3, 4, 2, 7)
+
+
+def test_model_runner_capture_cudagraph_records_buffer_plan() -> None:
+    config = SimpleNamespace(
+        max_num_seqs=40,
+        max_model_len=33,
+        hf_config=SimpleNamespace(hidden_size=16),
+    )
+    runner = ModelRunner(FakeModel([]), block_size=8, config=config)
+
+    plan = runner.capture_cudagraph()
+
+    assert isinstance(plan, CUDAGraphCapturePlan)
+    assert plan.batch_sizes == [1, 2, 4, 8, 16, 32]
+    assert plan.max_batch_size == 40
+    assert plan.max_num_blocks == 5
+    assert plan.hidden_size == 16
+    assert plan.buffer_shapes == {
+        "input_ids": (40,),
+        "positions": (40,),
+        "slot_mapping": (40,),
+        "context_lens": (40,),
+        "block_tables": (40, 5),
+        "outputs": (40, 16),
+    }
+    assert runner.graph_bs == plan.batch_sizes
+    assert runner.graph_capture_plan == plan
+
+
+def test_model_runner_capture_cudagraph_caps_max_batch_size() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=16)
+
+    plan = runner.capture_cudagraph(
+        SimpleNamespace(
+            max_num_seqs=600,
+            max_model_len=17,
+        )
+    )
+
+    assert plan.max_batch_size == 512
+    assert plan.batch_sizes[-1] == 512
+    assert plan.max_num_blocks == 2
+    assert plan.hidden_size is None
+    assert "outputs" not in plan.buffer_shapes
+
+
+def test_model_runner_capture_cudagraph_requires_config() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    with pytest.raises(ConfigurationError, match="config"):
+        runner.capture_cudagraph()
 
 
 def test_model_runner_call_rejects_unknown_method() -> None:

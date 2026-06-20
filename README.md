@@ -32,6 +32,7 @@ remote backends without rewriting sampling and stop handling.
 - Nano-VLLM-style `ModelRunner.call` and prepare methods
 - Nano-VLLM-style `ModelRunner.warmup_model`
 - Nano-VLLM-style `ModelRunner.allocate_kv_cache` layer wiring
+- Nano-VLLM-style `ModelRunner.capture_cudagraph` buffer planning
 - Nano-VLLM-style model `compute_logits` runner contract
 - Nano-VLLM-style attention context utilities for runner calls
 - Nano-VLLM-style safetensors model weight loader

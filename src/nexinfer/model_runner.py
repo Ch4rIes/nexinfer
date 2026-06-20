@@ -69,6 +69,17 @@ class KVCacheLayout:
 
 
 @dataclass(frozen=True, slots=True)
+class CUDAGraphCapturePlan:
+    """CPU-safe metadata for Nano-VLLM-style CUDA graph capture buffers."""
+
+    batch_sizes: list[int]
+    max_batch_size: int
+    max_num_blocks: int
+    hidden_size: int | None
+    buffer_shapes: dict[str, tuple[int, ...]]
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRunnerContext:
     """Prepared runner context for the latest prefill or decode batch."""
 
@@ -129,6 +140,8 @@ class ModelRunner:
         self.last_sample_batch: PreparedSampleBatch | None = None
         self.kv_cache: Any | None = None
         self.kv_cache_shape: tuple[int, ...] | None = None
+        self.graph_bs: list[int] = []
+        self.graph_capture_plan: CUDAGraphCapturePlan | None = None
 
     def call(self, method_name: str, *args: Any) -> Any:
         """Call a runner method by name, matching Nano-VLLM's control path."""
@@ -225,6 +238,39 @@ class ModelRunner:
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
         return self.kv_cache
+
+    def capture_cudagraph(self, config: Any | None = None) -> CUDAGraphCapturePlan:
+        """Record Nano-VLLM-style CUDA graph capture buffer metadata."""
+
+        config = config or self.config
+        if config is None:
+            raise ConfigurationError("config is required to capture CUDA graph")
+        max_num_seqs = _positive_config_int(config, "max_num_seqs")
+        max_model_len = _positive_config_int(config, "max_model_len")
+        max_batch_size = min(max_num_seqs, 512)
+        max_num_blocks = (max_model_len + self.block_size - 1) // self.block_size
+        batch_sizes = [1, 2, 4, 8, *range(16, max_batch_size + 1, 16)]
+        hidden_size = _optional_positive_hidden_size(config)
+        buffer_shapes = {
+            "input_ids": (max_batch_size,),
+            "positions": (max_batch_size,),
+            "slot_mapping": (max_batch_size,),
+            "context_lens": (max_batch_size,),
+            "block_tables": (max_batch_size, max_num_blocks),
+        }
+        if hidden_size is not None:
+            buffer_shapes["outputs"] = (max_batch_size, hidden_size)
+
+        plan = CUDAGraphCapturePlan(
+            batch_sizes=batch_sizes,
+            max_batch_size=max_batch_size,
+            max_num_blocks=max_num_blocks,
+            hidden_size=hidden_size,
+            buffer_shapes=buffer_shapes,
+        )
+        self.graph_bs = batch_sizes
+        self.graph_capture_plan = plan
+        return plan
 
     def run(
         self,
@@ -536,6 +582,13 @@ def _positive_attr_int(target: Any, name: str) -> int:
     if value <= 0:
         raise ConfigurationError(f"{name} must be positive")
     return value
+
+
+def _optional_positive_hidden_size(config: Any) -> int | None:
+    hf_config = getattr(config, "hf_config", None)
+    if hf_config is None or getattr(hf_config, "hidden_size", None) is None:
+        return None
+    return _positive_attr_int(hf_config, "hidden_size")
 
 
 def _decode_token_count(sequence: RunnerSequence) -> int:

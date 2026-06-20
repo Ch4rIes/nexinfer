@@ -175,6 +175,14 @@ class ModelRunner:
         self.last_sample_batch = prepare_sample_sequences(sequences)
         return self.last_sample_batch
 
+    def prepare_block_tables(
+        self,
+        sequences: SequenceCollection[RunnerSequence],
+    ) -> list[list[int]]:
+        """Prepare padded block tables for a sequence batch."""
+
+        return prepare_block_tables(sequences)
+
     def run_model(
         self,
         input_ids: SequenceCollection[int],
@@ -261,7 +269,7 @@ def prepare_prefill_batch(
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
         slot_mapping=slot_mapping,
-        block_tables=_padded_block_tables(inputs),
+        block_tables=prepare_block_tables(inputs),
     )
 
 
@@ -304,7 +312,7 @@ def prepare_decode_batch(
         positions=positions,
         slot_mapping=slot_mapping,
         context_lengths=context_lengths,
-        block_tables=_padded_block_tables(inputs),
+        block_tables=prepare_block_tables(inputs),
     )
 
 
@@ -361,6 +369,22 @@ def prepare_sample_sequences(
     )
 
 
+def prepare_block_tables(
+    inputs: SequenceCollection[PrefillInput]
+    | SequenceCollection[DecodeInput]
+    | SequenceCollection[RunnerSequence],
+) -> list[list[int]]:
+    """Prepare Nano-VLLM-style padded block tables."""
+
+    max_length = max((len(item.block_table) for item in inputs), default=0)
+    if max_length == 0:
+        return []
+    return [
+        [*item.block_table, *([-1] * (max_length - len(item.block_table)))]
+        for item in inputs
+    ]
+
+
 def _scheduled_token_count(item: PrefillInput) -> int:
     count = item.scheduled_token_count
     if count < 0:
@@ -387,18 +411,6 @@ def _slot_mapping(
             raise ConfigurationError("block_table is too short for scheduled tokens")
         slots.append(block_table[block_index] * block_size + position % block_size)
     return slots
-
-
-def _padded_block_tables(
-    inputs: SequenceCollection[PrefillInput] | SequenceCollection[DecodeInput],
-) -> list[list[int]]:
-    max_length = max((len(item.block_table) for item in inputs), default=0)
-    if max_length == 0:
-        return []
-    return [
-        [*item.block_table, *([-1] * (max_length - len(item.block_table)))]
-        for item in inputs
-    ]
 
 
 def _validate_block_size(block_size: int) -> None:

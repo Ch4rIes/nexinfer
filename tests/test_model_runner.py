@@ -13,6 +13,7 @@ from nexinfer import (
     Sampler,
     Sequence,
     get_context,
+    prepare_block_tables,
     prepare_decode_batch,
     prepare_decode_sequences,
     prepare_prefill_batch,
@@ -272,6 +273,25 @@ def test_prepare_sample_sequences_returns_temperatures() -> None:
     prepared = prepare_sample_sequences([first, second])
 
     assert prepared.temperatures == [0.5, 1.25]
+
+
+def test_prepare_block_tables_pads_sequence_tables() -> None:
+    first = Sequence([1, 2])
+    first.block_table.extend([3, 4])
+    second = Sequence([5])
+    second.block_table.extend([9])
+
+    assert prepare_block_tables([first, second]) == [[3, 4], [9, -1]]
+
+
+def test_model_runner_prepare_block_tables_uses_sequence_metadata() -> None:
+    first = Sequence([1, 2])
+    first.block_table.extend([3, 4, 5])
+    second = Sequence([6])
+    second.block_table.extend([7])
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    assert runner.prepare_block_tables([first, second]) == [[3, 4, 5], [7, -1, -1]]
 
 
 def test_model_runner_prepare_methods_set_context_and_sampling_metadata() -> None:

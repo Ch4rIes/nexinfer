@@ -27,6 +27,7 @@ remote backends without rewriting sampling and stop handling.
 - explicit sequence and decode state
 - optional batched backend prefill/decode contract with scheduled-token metadata
 - Nano-VLLM-style model-runner batch preparation
+- Nano-VLLM-style model-runner block-table preparation
 - Nano-VLLM-style model-runner orchestration over prepared sequence batches
 - Nano-VLLM-style `ModelRunner.call` and prepare methods
 - Nano-VLLM-style model `compute_logits` runner contract

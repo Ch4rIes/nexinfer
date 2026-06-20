@@ -8,6 +8,7 @@ from nexinfer.errors import (
     NexInferError,
     SchedulerError,
 )
+from nexinfer.model import ModelConfig
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
@@ -33,6 +34,7 @@ __all__ = [
     "KVCacheBlockAllocator",
     "LLMEngine",
     "ModelOutput",
+    "ModelConfig",
     "NexInferError",
     "SampledToken",
     "SamplingConfig",

@@ -14,11 +14,17 @@ from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tok
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
-from nexinfer.scheduler import GenerationRequest, RequestQueue, ScheduledBatch
+from nexinfer.scheduler import (
+    ActiveSequence,
+    GenerationRequest,
+    RequestQueue,
+    ScheduledBatch,
+)
 from nexinfer.state import SequenceState
 from nexinfer.tokenizer import HuggingFaceTokenizer, VocabularyTokenizer
 
 __all__ = [
+    "ActiveSequence",
     "DecoderOnlyBackend",
     "DecodeState",
     "BackendError",

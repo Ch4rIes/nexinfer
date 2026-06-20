@@ -8,7 +8,7 @@ from nexinfer.errors import BackendError, ConfigurationError
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
-from nexinfer.scheduler import GenerationRequest
+from nexinfer.scheduler import ActiveSequence, GenerationRequest
 from nexinfer.state import SequenceState
 
 
@@ -82,6 +82,67 @@ class LLMEngine:
         """Generate structured results for scheduled requests."""
 
         return [self.complete(request.prompt, request.config) for request in requests]
+
+    def start_request(self, request: GenerationRequest) -> ActiveSequence:
+        """Admit a scheduled request and run its prefill step."""
+
+        prompt_token_ids = self._tokenizer.encode(request.prompt)
+        _validate_prompt_limits(prompt_token_ids, request.config)
+        sequence = SequenceState(prompt_token_ids=prompt_token_ids)
+        max_new_tokens = _effective_max_new_tokens(prompt_token_ids, request.config)
+        if max_new_tokens == 0:
+            sequence.finish("length")
+            return ActiveSequence(
+                request=request,
+                sequence=sequence,
+                output=None,
+                rng=random.Random(request.config.sampling.seed),
+                max_new_tokens=0,
+                stop_token_ids=set(request.config.stop_token_ids),
+            )
+
+        output = self._backend.begin(prompt_token_ids)
+        _validate_model_output(output, self._backend.vocab_size)
+        return ActiveSequence(
+            request=request,
+            sequence=sequence,
+            output=output,
+            rng=random.Random(request.config.sampling.seed),
+            max_new_tokens=max_new_tokens,
+            stop_token_ids=set(request.config.stop_token_ids),
+        )
+
+    def decode_one(self, active: ActiveSequence) -> ActiveSequence:
+        """Decode at most one token for an active sequence."""
+
+        if not active.can_decode:
+            if not active.is_finished:
+                active.sequence.finish("length")
+            return active
+
+        assert active.output is not None
+        sampled = sample_next(
+            active.output.logits,
+            active.request.config.sampling,
+            active.rng,
+        )
+        token_id = sampled.token_id
+        if token_id in active.stop_token_ids:
+            if active.request.config.include_stop_token:
+                active.sequence.append(token_id, sampled.logprob)
+            active.sequence.finish("stop")
+            active.output = None
+            return active
+
+        active.sequence.append(token_id, sampled.logprob)
+        if active.sequence.completion_tokens >= active.max_new_tokens:
+            active.sequence.finish("length")
+            active.output = None
+            return active
+
+        active.output = self._backend.step(token_id, active.output.state)
+        _validate_model_output(active.output, self._backend.vocab_size)
+        return active
 
     def stream(self, prompt: str, config: GenerationConfig | None = None) -> Iterator[str]:
         """Yield decoded text fragments as tokens are generated."""

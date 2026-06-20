@@ -17,6 +17,7 @@ class GenerationRequest:
     prompt: str
     config: GenerationConfig
     metadata: Mapping[str, str] = field(default_factory=dict)
+    prompt_token_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,10 @@ class ScheduledBatch:
 
     def __len__(self) -> int:
         return len(self.requests)
+
+    @property
+    def prompt_tokens(self) -> int:
+        return sum(request.prompt_token_count or 0 for request in self.requests)
 
 
 class RequestQueue:
@@ -47,30 +52,52 @@ class RequestQueue:
         *,
         request_id: str | None = None,
         metadata: Mapping[str, str] | None = None,
+        prompt_token_count: int | None = None,
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._ids)}"
         if request_id in self._pending_ids:
             raise SchedulerError(f"duplicate request id: {request_id}")
+        if prompt_token_count is not None and prompt_token_count < 0:
+            raise SchedulerError("prompt_token_count must be non-negative when set")
 
         request = GenerationRequest(
             request_id=request_id,
             prompt=prompt,
             config=config or GenerationConfig(),
             metadata=dict(metadata or {}),
+            prompt_token_count=prompt_token_count,
         )
         self._pending.append(request)
         self._pending_ids.add(request_id)
         return request
 
-    def schedule(self, *, max_requests: int) -> ScheduledBatch:
+    def schedule(
+        self,
+        *,
+        max_requests: int,
+        max_prompt_tokens: int | None = None,
+    ) -> ScheduledBatch:
         if max_requests <= 0:
             raise SchedulerError("max_requests must be positive")
+        if max_prompt_tokens is not None and max_prompt_tokens <= 0:
+            raise SchedulerError("max_prompt_tokens must be positive when set")
 
         requests: list[GenerationRequest] = []
+        prompt_tokens = 0
         while self._pending and len(requests) < max_requests:
+            next_request = self._pending[0]
+            next_prompt_tokens = next_request.prompt_token_count or 0
+            if (
+                max_prompt_tokens is not None
+                and requests
+                and prompt_tokens + next_prompt_tokens > max_prompt_tokens
+            ):
+                break
+
             request = self._pending.popleft()
             self._pending_ids.remove(request.request_id)
             requests.append(request)
+            prompt_tokens += next_prompt_tokens
 
         return ScheduledBatch(requests=tuple(requests))
 

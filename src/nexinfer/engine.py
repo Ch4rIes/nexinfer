@@ -19,6 +19,10 @@ class LLMEngine:
         self._backend = backend
         self._tokenizer = tokenizer
 
+    @property
+    def tokenizer(self) -> Tokenizer:
+        return self._tokenizer
+
     def generate(self, prompt: str, config: GenerationConfig | None = None) -> str:
         """Generate text from a prompt."""
 

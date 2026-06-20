@@ -47,6 +47,27 @@ def test_request_queue_preserves_request_metadata() -> None:
     assert request.metadata == {"tenant": "demo", "trace": "abc"}
 
 
+def test_request_queue_tracks_prompt_token_counts() -> None:
+    queue = RequestQueue()
+    queue.submit("a", request_id="a", prompt_token_count=2)
+    queue.submit("b", request_id="b", prompt_token_count=3)
+
+    batch = queue.schedule(max_requests=10, max_prompt_tokens=2)
+
+    assert [request.request_id for request in batch.requests] == ["a"]
+    assert batch.prompt_tokens == 2
+    assert len(queue) == 1
+
+
+def test_request_queue_allows_first_request_over_prompt_budget() -> None:
+    queue = RequestQueue()
+    queue.submit("large", request_id="large", prompt_token_count=8)
+
+    batch = queue.schedule(max_requests=10, max_prompt_tokens=4)
+
+    assert [request.request_id for request in batch.requests] == ["large"]
+
+
 def test_request_queue_cancels_pending_request() -> None:
     queue = RequestQueue()
     queue.submit("first", request_id="a")

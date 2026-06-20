@@ -47,6 +47,14 @@ def test_runtime_preserves_submitted_metadata() -> None:
     assert request.metadata == {"trace": "abc"}
 
 
+def test_runtime_estimates_prompt_tokens_on_submit() -> None:
+    runtime = _runtime()
+
+    request = runtime.submit("a b", request_id="one")
+
+    assert request.prompt_token_count == 2
+
+
 def test_runtime_cancel_removes_pending_request() -> None:
     runtime = _runtime()
     runtime.submit("a", request_id="one")

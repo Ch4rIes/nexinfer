@@ -47,11 +47,13 @@ class InferenceRuntime:
         request_id: str | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> GenerationRequest:
+        prompt_token_count = len(self._engine.tokenizer.encode(prompt))
         return self._queue.submit(
             prompt,
             config,
             request_id=request_id,
             metadata=metadata,
+            prompt_token_count=prompt_token_count,
         )
 
     def cancel(self, request_id: str) -> bool:

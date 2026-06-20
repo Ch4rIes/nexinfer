@@ -210,3 +210,42 @@ def test_active_scheduler_cancel_deallocates_running_blocks() -> None:
     assert block_manager.used_blocks == 1
     assert scheduler.cancel("one") is True
     assert block_manager.used_blocks == 0
+
+
+def test_active_scheduler_preempts_running_sequence_to_free_append_block() -> None:
+    block_manager = PrefixKVCacheBlockManager(num_blocks=2, block_size=1)
+    scheduler = ActiveScheduler(
+        max_num_seqs=2,
+        block_manager=block_manager,
+    )
+    scheduler.add_request(_request("one", "a", 1))
+    scheduler.add_request(_request("two", "x", 1))
+    engine = _engine()
+
+    prefill = scheduler.schedule()
+    active = tuple(engine.start_requests(list(prefill.requests)))
+    scheduler.postprocess_prefill(active)
+
+    decode = scheduler.schedule()
+
+    assert [item.request_id for item in decode.active_sequences] == ["one"]
+    assert scheduler.waiting_count == 1
+    assert scheduler.running_count == 0
+    assert block_manager.used_blocks == 2
+
+
+def test_active_scheduler_preempts_current_sequence_when_no_victim_exists() -> None:
+    block_manager = PrefixKVCacheBlockManager(num_blocks=1, block_size=1)
+    scheduler = ActiveScheduler(max_num_seqs=1, block_manager=block_manager)
+    scheduler.add_request(_request("one", "a", 1))
+    engine = _engine()
+
+    prefill = scheduler.schedule()
+    active = tuple(engine.start_requests(list(prefill.requests)))
+    scheduler.postprocess_prefill(active)
+    scheduled = scheduler.schedule()
+
+    assert scheduled.phase == "idle"
+    assert scheduler.waiting_count == 1
+    assert scheduler.running_count == 0
+    assert block_manager.used_blocks == 0

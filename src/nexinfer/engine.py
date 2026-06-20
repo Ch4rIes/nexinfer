@@ -160,6 +160,34 @@ class LLMEngine:
 
         return active_sequences
 
+    def prefill_active_sequences(
+        self,
+        active_sequences: list[ActiveSequence],
+    ) -> list[ActiveSequence]:
+        """Re-prefill preempted active sequences from their current token history."""
+
+        prefill_inputs: list[list[int]] = []
+        prefill_indices: list[int] = []
+        for index, active in enumerate(active_sequences):
+            if active.is_finished:
+                continue
+            if active.sequence.completion_tokens >= active.max_new_tokens:
+                active.sequence.finish("length")
+                active.output = None
+                continue
+            prefill_inputs.append(active.sequence.token_ids)
+            prefill_indices.append(index)
+
+        if prefill_inputs:
+            outputs = self._begin_batch(prefill_inputs)
+            if len(outputs) != len(prefill_inputs):
+                raise BackendError("backend returned wrong number of prefill outputs")
+            for active_index, output in zip(prefill_indices, outputs, strict=True):
+                _validate_model_output(output, self._backend.vocab_size)
+                active_sequences[active_index].output = output
+
+        return active_sequences
+
     def decode_one(self, active: ActiveSequence) -> ActiveSequence:
         """Decode at most one token for an active sequence."""
 

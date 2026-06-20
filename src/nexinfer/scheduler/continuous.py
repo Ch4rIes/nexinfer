@@ -11,6 +11,7 @@ from nexinfer.scheduler.active import ActiveSequence
 from nexinfer.scheduler.request import GenerationRequest
 
 SchedulePhase = Literal["idle", "prefill", "decode"]
+WaitingEntry = GenerationRequest | ActiveSequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,7 @@ class ActiveScheduler:
         self._max_num_seqs = max_num_seqs
         self._max_num_batched_tokens = max_num_batched_tokens
         self._block_manager = block_manager
-        self._waiting: deque[GenerationRequest] = deque()
+        self._waiting: deque[WaitingEntry] = deque()
         self._running: deque[ActiveSequence] = deque()
         self._request_ids: set[str] = set()
 
@@ -78,7 +79,7 @@ class ActiveScheduler:
             return False
 
         self._waiting = deque(
-            request for request in self._waiting if request.request_id != request_id
+            entry for entry in self._waiting if self._entry_id(entry) != request_id
         )
         was_running = any(
             active.request_id == request_id for active in self._running
@@ -123,12 +124,16 @@ class ActiveScheduler:
             return None
 
         requests: list[GenerationRequest] = []
+        active_sequences: list[ActiveSequence] = []
         num_tokens = 0
         cached_tokens = 0
-        while self._waiting and len(requests) < self._max_num_seqs:
-            next_request = self._waiting[0]
-            next_tokens = next_request.prompt_token_count or 0
-            next_plan = self._allocation_plan(next_request)
+        while (
+            self._waiting
+            and len(requests) + len(active_sequences) < self._max_num_seqs
+        ):
+            next_entry = self._waiting[0]
+            next_tokens = len(self._entry_token_ids(next_entry))
+            next_plan = self._allocation_plan(next_entry)
             would_exceed = (
                 self._max_num_batched_tokens is not None
                 and num_tokens + max(next_tokens - next_plan.num_cached_tokens, 0)
@@ -141,17 +146,21 @@ class ActiveScheduler:
                     break
                 raise CacheError("not enough free KV-cache blocks")
 
-            request = self._waiting.popleft()
-            self._allocate_request(request, next_plan.num_cached_blocks)
-            requests.append(request)
+            entry = self._waiting.popleft()
+            self._allocate_entry(entry, next_plan.num_cached_blocks)
+            if isinstance(entry, ActiveSequence):
+                active_sequences.append(entry)
+            else:
+                requests.append(entry)
             num_tokens += max(next_tokens - next_plan.num_cached_tokens, 0)
             cached_tokens += next_plan.num_cached_tokens
 
-        if not requests:
+        if not requests and not active_sequences:
             return None
         return ScheduledActiveBatch(
             phase="prefill",
             requests=tuple(requests),
+            active_sequences=tuple(active_sequences),
             num_tokens=num_tokens,
             cached_tokens=cached_tokens,
         )
@@ -162,11 +171,17 @@ class ActiveScheduler:
             active = self._running.popleft()
             if active.is_finished:
                 continue
-            if self._can_append(active):
+            while not self._can_append(active):
+                if self._running:
+                    self.preempt(self._running.pop())
+                else:
+                    self.preempt(active)
+                    break
+            else:
                 self._reserve_append(active)
                 active_sequences.append(active)
-            else:
-                self._running.appendleft(active)
+
+            if self._entry_is_waiting(active.request_id):
                 break
 
         if not active_sequences:
@@ -191,7 +206,15 @@ class ActiveScheduler:
                 self._running.append(active)
         return tuple(finished)
 
-    def _allocation_plan(self, request: GenerationRequest) -> _SchedulerAllocationPlan:
+    def preempt(self, active: ActiveSequence) -> None:
+        """Move a running sequence back to waiting and free its KV blocks."""
+
+        self._deallocate(active.request_id)
+        active.output = None
+        active.block_table = None
+        self._waiting.appendleft(active)
+
+    def _allocation_plan(self, entry: WaitingEntry) -> _SchedulerAllocationPlan:
         if self._block_manager is None:
             return _SchedulerAllocationPlan(
                 can_allocate=True,
@@ -199,7 +222,7 @@ class ActiveScheduler:
                 num_cached_tokens=0,
             )
 
-        token_ids = self._request_token_ids(request)
+        token_ids = self._entry_token_ids(entry)
         plan = self._block_manager.can_allocate(token_ids)
         return _SchedulerAllocationPlan(
             can_allocate=plan.can_allocate,
@@ -207,16 +230,16 @@ class ActiveScheduler:
             num_cached_tokens=plan.num_cached_blocks * self._block_manager.block_size,
         )
 
-    def _allocate_request(
+    def _allocate_entry(
         self,
-        request: GenerationRequest,
+        entry: WaitingEntry,
         num_cached_blocks: int,
     ) -> None:
         if self._block_manager is None:
             return
         self._block_manager.allocate(
-            request.request_id,
-            self._request_token_ids(request),
+            self._entry_id(entry),
+            self._entry_token_ids(entry),
             num_cached_blocks=num_cached_blocks,
         )
 
@@ -246,6 +269,19 @@ class ActiveScheduler:
         if self._block_manager is None:
             return
         self._block_manager.deallocate(request_id)
+
+    def _entry_is_waiting(self, request_id: str) -> bool:
+        return any(self._entry_id(entry) == request_id for entry in self._waiting)
+
+    def _entry_id(self, entry: WaitingEntry) -> str:
+        if isinstance(entry, ActiveSequence):
+            return entry.request_id
+        return entry.request_id
+
+    def _entry_token_ids(self, entry: WaitingEntry) -> list[int]:
+        if isinstance(entry, ActiveSequence):
+            return entry.sequence.token_ids
+        return self._request_token_ids(entry)
 
     def _request_token_ids(self, request: GenerationRequest) -> list[int]:
         raw_token_ids = request.metadata.get("token_ids")

@@ -152,8 +152,11 @@ class InferenceRuntime:
             return ()
 
         if scheduled.phase == "prefill":
-            active_sequences = tuple(
-                self._engine.start_requests(list(scheduled.requests))
+            active_sequences = (
+                *self._engine.start_requests(list(scheduled.requests)),
+                *self._engine.prefill_active_sequences(
+                    list(scheduled.active_sequences)
+                ),
             )
             finished = self._active_scheduler.postprocess_prefill(active_sequences)
         else:

@@ -121,7 +121,9 @@ print(runtime.stats.total_tokens)
 
 `continuous` executes one scheduler phase per `run_once`: prefill work is
 scheduled before decode work, and unfinished sequences stay in the running queue
-until a later decode phase completes them.
+until a later decode phase completes them. When KV append capacity is exhausted,
+the active scheduler can preempt a running sequence, free its blocks, and move it
+back to waiting for a later prefill phase.
 
 ## Optional integrations
 
@@ -160,10 +162,9 @@ Near-term:
 Mid-term:
 
 - connect `DecodeState.cache` to real KV-cache tensors
-- connect the active scheduler to KV-cache block allocation and preemption
+- add chunked prefill scheduling for prompts larger than the token budget
 - replace toy batch methods with real tensor-batched model runner calls
-- wire the block allocator into per-sequence KV-cache ownership
-- add prefix-cache primitives
+- wire block tables into backend decode state
 
 Later:
 

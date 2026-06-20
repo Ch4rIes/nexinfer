@@ -21,6 +21,7 @@ from nexinfer.errors import (
 )
 from nexinfer.model import Config, LLMConfig, ModelConfig
 from nexinfer.llm import LLM, LLMOutput, LLMStepOutput
+from nexinfer.loader import default_weight_loader, load_model
 from nexinfer.metrics import RuntimeStats
 from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
 from nexinfer.model_runner import (
@@ -127,8 +128,10 @@ __all__ = [
     "TokenUsage",
     "Tokenizer",
     "VocabularyTokenizer",
+    "default_weight_loader",
     "prepare_block_tables",
     "get_context",
+    "load_model",
     "prepare_decode_batch",
     "prepare_decode_sequences",
     "prepare_prefill_batch",

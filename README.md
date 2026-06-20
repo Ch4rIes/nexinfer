@@ -32,6 +32,7 @@ remote backends without rewriting sampling and stop handling.
 - Nano-VLLM-style `ModelRunner.call` and prepare methods
 - Nano-VLLM-style model `compute_logits` runner contract
 - Nano-VLLM-style attention context utilities for runner calls
+- Nano-VLLM-style safetensors model weight loader
 - Nano-VLLM-compatible `Sequence` scheduler facade
 - Nano-VLLM-style engine loop over `Scheduler` and `ModelRunner`
 - FIFO request scheduling

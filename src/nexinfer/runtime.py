@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Literal
 
+from nexinfer.cache import PrefixKVCacheBlockManager
 from nexinfer.config import GenerationConfig
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import ConfigurationError
@@ -33,6 +34,7 @@ class InferenceRuntime:
         max_batch_size: int = 8,
         max_batch_prompt_tokens: int | None = None,
         decode_strategy: DecodeStrategy = "sequential",
+        block_manager: PrefixKVCacheBlockManager | None = None,
         queue: RequestQueue | None = None,
     ) -> None:
         if max_batch_size <= 0:
@@ -54,6 +56,7 @@ class InferenceRuntime:
         self._active_scheduler = ActiveScheduler(
             max_num_seqs=max_batch_size,
             max_num_batched_tokens=max_batch_prompt_tokens,
+            block_manager=block_manager,
         )
         self._stats = RuntimeStats()
         self._request_ids = count(1)
@@ -77,13 +80,19 @@ class InferenceRuntime:
         metadata: Mapping[str, str] | None = None,
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._request_ids)}"
-        prompt_token_count = len(self._engine.tokenizer.encode(prompt))
+        prompt_token_ids = self._engine.tokenizer.encode(prompt)
+        prompt_token_count = len(prompt_token_ids)
+        metadata = dict(metadata or {})
+        metadata.setdefault(
+            "token_ids",
+            ",".join(str(token_id) for token_id in prompt_token_ids),
+        )
         if self._decode_strategy == "continuous":
             request = GenerationRequest(
                 request_id=request_id,
                 prompt=prompt,
                 config=config or GenerationConfig(),
-                metadata=dict(metadata or {}),
+                metadata=metadata,
                 prompt_token_count=prompt_token_count,
             )
             self._active_scheduler.add_request(request)

@@ -2,6 +2,7 @@ from nexinfer import (
     GenerationConfig,
     InferenceRuntime,
     LLMEngine,
+    PrefixKVCacheBlockManager,
     SamplingConfig,
     VocabularyTokenizer,
 )
@@ -62,7 +63,7 @@ def test_runtime_preserves_submitted_metadata() -> None:
 
     request = runtime.submit("a", request_id="one", metadata={"trace": "abc"})
 
-    assert request.metadata == {"trace": "abc"}
+    assert request.metadata["trace"] == "abc"
 
 
 def test_runtime_estimates_prompt_tokens_on_submit() -> None:
@@ -228,3 +229,37 @@ def test_continuous_runtime_drain_returns_completed_outputs() -> None:
     assert [item.request_id for item in completed] == ["one"]
     assert [item.result.text for item in completed] == ["b"]
     assert runtime.stats.requests == 1
+
+
+def test_continuous_runtime_can_use_prefix_block_manager() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {eos_id: 5.0},
+        },
+    )
+    block_manager = PrefixKVCacheBlockManager(num_blocks=4, block_size=2)
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=2,
+        decode_strategy="continuous",
+        block_manager=block_manager,
+    )
+
+    runtime.submit(
+        "a",
+        GenerationConfig(
+            max_new_tokens=1,
+            sampling=SamplingConfig(temperature=0),
+        ),
+        request_id="one",
+    )
+
+    completed = runtime.run_until_idle()
+
+    assert [item.request_id for item in completed] == ["one"]
+    assert block_manager.used_blocks == 0

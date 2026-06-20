@@ -18,6 +18,7 @@ class ActiveSequence:
     rng: random.Random
     max_new_tokens: int
     stop_token_ids: set[int]
+    block_table: list[int] | None = None
 
     @property
     def request_id(self) -> str:

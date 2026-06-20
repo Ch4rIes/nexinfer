@@ -102,13 +102,16 @@ active_scheduler = ActiveScheduler(max_num_seqs=8, max_num_batched_tokens=2048)
 For queued execution, wrap an engine in `InferenceRuntime`:
 
 ```python
-from nexinfer import InferenceRuntime
+from nexinfer import InferenceRuntime, PrefixKVCacheBlockManager
+
+block_manager = PrefixKVCacheBlockManager(num_blocks=1024, block_size=16)
 
 runtime = InferenceRuntime(
     engine,
     max_batch_size=8,
     max_batch_prompt_tokens=2048,
     decode_strategy="continuous",
+    block_manager=block_manager,
 )
 runtime.submit("hello", request_id="request-1")
 completed = runtime.run_once()

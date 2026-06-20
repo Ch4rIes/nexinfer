@@ -3,6 +3,11 @@ import pytest
 from nexinfer import Config, ConfigurationError, LLMConfig, ModelConfig
 
 
+class FakeHFConfig:
+    def __init__(self, max_position_embeddings: int) -> None:
+        self.max_position_embeddings = max_position_embeddings
+
+
 def test_model_config_accepts_loading_options() -> None:
     config = ModelConfig(
         model_name_or_path="tiny",
@@ -84,6 +89,22 @@ def test_llm_config_can_clamp_model_length_from_hf_config() -> None:
     config.clamp_model_len(1024)
 
     assert config.max_model_len == 1024
+
+
+def test_llm_config_clamps_model_length_from_provided_hf_config() -> None:
+    config = LLMConfig(
+        "tiny",
+        max_model_len=4096,
+        hf_config=FakeHFConfig(max_position_embeddings=1024),
+    )
+
+    assert config.max_model_len == 1024
+    assert config.hf_config.max_position_embeddings == 1024
+
+
+def test_llm_config_validates_hf_config_model_length() -> None:
+    with pytest.raises(ConfigurationError, match="max_position_embeddings"):
+        LLMConfig("tiny", hf_config=FakeHFConfig(max_position_embeddings=0))
 
 
 def test_llm_config_can_create_model_config() -> None:

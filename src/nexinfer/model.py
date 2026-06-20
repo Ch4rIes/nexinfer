@@ -68,6 +68,14 @@ class LLMConfig:
             raise ConfigurationError(
                 "num_kvcache_blocks must be -1 or a positive integer"
             )
+        if self.hf_config is not None:
+            max_position_embeddings = getattr(
+                self.hf_config,
+                "max_position_embeddings",
+                None,
+            )
+            if max_position_embeddings is not None:
+                self.clamp_model_len(int(max_position_embeddings))
 
     def clamp_model_len(self, max_position_embeddings: int) -> None:
         if max_position_embeddings <= 0:

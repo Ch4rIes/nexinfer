@@ -21,6 +21,7 @@ remote backends without rewriting sampling and stop handling.
 - simple batch APIs
 - Nano-VLLM-style `LLM.generate` facade and `SamplingParams`
 - Nano-VLLM-style `Config`/`LLMConfig` constructor surface
+- Nano-VLLM-style config clamping from `hf_config.max_position_embeddings`
 - optional `LLM` execution through `ModelRunner` and `Scheduler`
 - Nano-VLLM-style `Sequence` payload for scheduler/model-runner handoff
 - explicit sequence and decode state

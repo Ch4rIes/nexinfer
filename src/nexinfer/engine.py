@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 from nexinfer.config import GenerationConfig
 from nexinfer.errors import BackendError, ConfigurationError
@@ -57,6 +57,22 @@ class LLMEngine:
         _validate_prompt_limits(prompt_token_ids, config)
         sequence = self._generate_sequence(
             prompt_token_ids,
+            config,
+        )
+        return self._result_from_sequence(sequence, config)
+
+    def complete_token_ids(
+        self,
+        prompt_token_ids: Sequence[int],
+        config: GenerationConfig | None = None,
+    ) -> GenerationResult:
+        """Generate from pre-tokenized input and return structured metadata."""
+
+        config = config or GenerationConfig()
+        input_ids = list(prompt_token_ids)
+        _validate_prompt_limits(input_ids, config)
+        sequence = self._generate_sequence(
+            input_ids,
             config,
         )
         return self._result_from_sequence(sequence, config)

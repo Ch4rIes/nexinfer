@@ -18,6 +18,7 @@ remote backends without rewriting sampling and stop handling.
 - structured results with token usage and logprobs
 - streaming chunks
 - simple batch APIs
+- Nano-VLLM-style `LLM.generate` facade and `SamplingParams`
 - explicit sequence and decode state
 - optional batched backend prefill/decode contract with scheduled-token metadata
 - Nano-VLLM-style model-runner batch preparation
@@ -68,6 +69,17 @@ Use `complete_batch` for multiple prompts:
 results = engine.complete_batch(["hello", "world"])
 for result in results:
     print(result.text)
+```
+
+Use the Nano-VLLM-style facade when you want a familiar list-in/list-out API:
+
+```python
+from nexinfer import LLM, SamplingParams
+
+llm = LLM(backend=backend, tokenizer=tokenizer)
+outputs = llm.generate(["hello"], SamplingParams(max_tokens=8), use_tqdm=False)
+print(outputs[0]["text"])
+print(outputs[0]["token_ids"])
 ```
 
 The cache module includes early block-table primitives for future paged KV-cache

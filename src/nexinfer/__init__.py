@@ -17,6 +17,7 @@ from nexinfer.errors import (
     SchedulerError,
 )
 from nexinfer.model import ModelConfig
+from nexinfer.llm import LLM, LLMOutput
 from nexinfer.metrics import RuntimeStats
 from nexinfer.model_runner import (
     ModelRunnerContext,
@@ -37,6 +38,7 @@ from nexinfer.protocols import (
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
+from nexinfer.sampling_params import SamplingParams
 from nexinfer.scheduler import (
     ActiveScheduler,
     ActiveSequence,
@@ -71,6 +73,8 @@ __all__ = [
     "KVCacheBlock",
     "KVCacheBlockAllocator",
     "LLMEngine",
+    "LLM",
+    "LLMOutput",
     "ModelOutput",
     "ModelConfig",
     "ModelRunnerContext",
@@ -83,6 +87,7 @@ __all__ = [
     "PreparedPrefillBatch",
     "SampledToken",
     "SamplingConfig",
+    "SamplingParams",
     "RequestQueue",
     "ScheduledActiveBatch",
     "RuntimeStats",

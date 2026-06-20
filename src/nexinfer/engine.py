@@ -240,6 +240,11 @@ class LLMEngine:
 
         return active_sequences
 
+    def result_from_active(self, active: ActiveSequence) -> GenerationResult:
+        """Build a generation result from an active sequence."""
+
+        return self._result_from_sequence(active.sequence, active.request.config)
+
     def stream(self, prompt: str, config: GenerationConfig | None = None) -> Iterator[str]:
         """Yield decoded text fragments as tokens are generated."""
 

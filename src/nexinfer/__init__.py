@@ -22,16 +22,20 @@ from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
 from nexinfer.scheduler import (
+    ActiveScheduler,
     ActiveSequence,
     GenerationRequest,
     RequestQueue,
+    ScheduledActiveBatch,
     ScheduledBatch,
+    SchedulePhase,
 )
 from nexinfer.state import SequenceState
 from nexinfer.tokenizer import HuggingFaceTokenizer, VocabularyTokenizer
 
 __all__ = [
     "ActiveSequence",
+    "ActiveScheduler",
     "BatchedDecoderOnlyBackend",
     "DecoderOnlyBackend",
     "DecodeState",
@@ -55,8 +59,10 @@ __all__ = [
     "SampledToken",
     "SamplingConfig",
     "RequestQueue",
+    "ScheduledActiveBatch",
     "RuntimeStats",
     "ScheduledBatch",
+    "SchedulePhase",
     "SchedulerError",
     "SequenceState",
     "StreamChunk",

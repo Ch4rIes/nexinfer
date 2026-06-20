@@ -81,14 +81,17 @@ print(allocation.block_table)
 ```
 
 The scheduler module starts with a FIFO queue that can form small execution
-batches:
+batches. The active scheduler mirrors Nano-VLLM's higher-level shape with
+separate waiting and running queues plus prefill/decode phases:
 
 ```python
-from nexinfer import RequestQueue
+from nexinfer import ActiveScheduler, RequestQueue
 
 queue = RequestQueue()
 queue.submit("hello")
 batch = queue.schedule(max_requests=8)
+
+active_scheduler = ActiveScheduler(max_num_seqs=8, max_num_batched_tokens=2048)
 ```
 
 For queued execution, wrap an engine in `InferenceRuntime`:
@@ -100,13 +103,17 @@ runtime = InferenceRuntime(
     engine,
     max_batch_size=8,
     max_batch_prompt_tokens=2048,
-    decode_strategy="interleaved",
+    decode_strategy="continuous",
 )
 runtime.submit("hello", request_id="request-1")
 completed = runtime.run_once()
 all_completed = runtime.run_until_idle()
 print(runtime.stats.total_tokens)
 ```
+
+`continuous` executes one scheduler phase per `run_once`: prefill work is
+scheduled before decode work, and unfinished sequences stay in the running queue
+until a later decode phase completes them.
 
 ## Optional integrations
 
@@ -145,7 +152,7 @@ Near-term:
 Mid-term:
 
 - connect `DecodeState.cache` to real KV-cache tensors
-- evolve request scheduling toward continuous batching
+- connect the active scheduler to KV-cache block allocation and preemption
 - replace toy batch methods with real tensor-batched model runner calls
 - wire the block allocator into per-sequence KV-cache ownership
 - add prefix-cache primitives

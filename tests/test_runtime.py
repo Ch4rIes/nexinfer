@@ -158,3 +158,73 @@ def test_runtime_can_use_interleaved_decode_strategy() -> None:
 
     assert [item.request_id for item in completed] == ["one", "two"]
     assert [item.result.text for item in completed] == ["b c", "y z"]
+
+
+def test_runtime_can_use_continuous_scheduler_strategy() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "x", "y", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {eos_id: 5.0},
+            tokenizer.token_id("x"): {tokenizer.token_id("y"): 5.0},
+            tokenizer.token_id("y"): {eos_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=2,
+        decode_strategy="continuous",
+    )
+    config = GenerationConfig(
+        max_new_tokens=8,
+        sampling=SamplingConfig(temperature=0),
+        stop_token_ids=(eos_id,),
+    )
+    runtime.submit("a", config, request_id="one")
+    runtime.submit("x", config, request_id="two")
+
+    assert runtime.run_once() == ()
+    assert runtime.pending_requests == 2
+    assert runtime.run_once() == ()
+
+    completed = runtime.run_once()
+
+    assert [item.request_id for item in completed] == ["one", "two"]
+    assert [item.result.text for item in completed] == ["b", "y"]
+    assert runtime.pending_requests == 0
+
+
+def test_continuous_runtime_drain_returns_completed_outputs() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {eos_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=2,
+        decode_strategy="continuous",
+    )
+    runtime.submit(
+        "a",
+        GenerationConfig(
+            max_new_tokens=8,
+            sampling=SamplingConfig(temperature=0),
+            stop_token_ids=(eos_id,),
+        ),
+        request_id="one",
+    )
+
+    completed = runtime.run_until_idle()
+
+    assert [item.request_id for item in completed] == ["one"]
+    assert [item.result.text for item in completed] == ["b"]
+    assert runtime.stats.requests == 1

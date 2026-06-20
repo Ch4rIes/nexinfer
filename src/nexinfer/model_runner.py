@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Sequence as SequenceCollection
 from dataclasses import dataclass
 
 from nexinfer.errors import ConfigurationError
-from nexinfer.protocols import DecodeInput, PrefillInput
+from nexinfer.protocols import DecodeInput, DecodeState, PrefillInput
+from nexinfer.sequence import Sequence as RunnerSequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,13 @@ class PreparedDecodeBatch:
     slot_mapping: list[int]
     context_lengths: list[int]
     block_tables: list[list[int]]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSampleBatch:
+    """Per-sequence sampling metadata for a model runner."""
+
+    temperatures: list[float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +82,7 @@ class ModelRunnerContext:
 
 
 def prepare_prefill_batch(
-    inputs: Sequence[PrefillInput],
+    inputs: SequenceCollection[PrefillInput],
     *,
     block_size: int,
 ) -> PreparedPrefillBatch:
@@ -125,7 +133,7 @@ def prepare_prefill_batch(
 
 
 def prepare_decode_batch(
-    inputs: Sequence[DecodeInput],
+    inputs: SequenceCollection[DecodeInput],
     *,
     block_size: int,
 ) -> PreparedDecodeBatch:
@@ -167,6 +175,59 @@ def prepare_decode_batch(
     )
 
 
+def prepare_prefill_sequences(
+    sequences: SequenceCollection[RunnerSequence],
+    *,
+    block_size: int,
+) -> PreparedPrefillBatch:
+    """Prepare flattened prefill metadata from Nano-VLLM-style sequences."""
+
+    return prepare_prefill_batch(
+        [
+            PrefillInput(
+                token_ids=sequence.token_ids,
+                num_cached_tokens=sequence.num_cached_tokens,
+                num_scheduled_tokens=sequence.num_scheduled_tokens,
+                block_table=tuple(sequence.block_table),
+            )
+            for sequence in sequences
+        ],
+        block_size=block_size,
+    )
+
+
+def prepare_decode_sequences(
+    sequences: SequenceCollection[RunnerSequence],
+    *,
+    block_size: int,
+) -> PreparedDecodeBatch:
+    """Prepare flattened decode metadata from Nano-VLLM-style sequences."""
+
+    return prepare_decode_batch(
+        [
+            DecodeInput(
+                token_id=sequence.last_token,
+                state=DecodeState(position=len(sequence) - 1),
+                block_table=tuple(sequence.block_table),
+                context_length=len(sequence),
+                num_scheduled_tokens=_decode_token_count(sequence),
+            )
+            for sequence in sequences
+        ],
+        block_size=block_size,
+    )
+
+
+def prepare_sample_sequences(
+    sequences: SequenceCollection[RunnerSequence],
+) -> PreparedSampleBatch:
+    """Prepare per-sequence sampling temperatures."""
+
+    return PreparedSampleBatch(
+        temperatures=[float(sequence.temperature) for sequence in sequences]
+    )
+
+
 def _scheduled_token_count(item: PrefillInput) -> int:
     count = item.scheduled_token_count
     if count < 0:
@@ -178,7 +239,7 @@ def _scheduled_token_count(item: PrefillInput) -> int:
 
 def _slot_mapping(
     *,
-    block_table: Sequence[int],
+    block_table: SequenceCollection[int],
     block_size: int,
     start: int,
     end: int,
@@ -196,7 +257,7 @@ def _slot_mapping(
 
 
 def _padded_block_tables(
-    inputs: Sequence[PrefillInput] | Sequence[DecodeInput],
+    inputs: SequenceCollection[PrefillInput] | SequenceCollection[DecodeInput],
 ) -> list[list[int]]:
     max_length = max((len(item.block_table) for item in inputs), default=0)
     if max_length == 0:
@@ -210,3 +271,11 @@ def _padded_block_tables(
 def _validate_block_size(block_size: int) -> None:
     if block_size <= 0:
         raise ConfigurationError("block_size must be positive")
+
+
+def _decode_token_count(sequence: RunnerSequence) -> int:
+    if sequence.num_scheduled_tokens < 0:
+        raise ConfigurationError("num_scheduled_tokens must be non-negative")
+    if sequence.num_scheduled_tokens > 1:
+        raise ConfigurationError("decode num_scheduled_tokens must be 1")
+    return sequence.num_scheduled_tokens or 1

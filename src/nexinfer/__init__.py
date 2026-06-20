@@ -23,8 +23,12 @@ from nexinfer.model_runner import (
     ModelRunnerContext,
     PreparedDecodeBatch,
     PreparedPrefillBatch,
+    PreparedSampleBatch,
     prepare_decode_batch,
+    prepare_decode_sequences,
     prepare_prefill_batch,
+    prepare_prefill_sequences,
+    prepare_sample_sequences,
 )
 from nexinfer.protocols import (
     BatchedDecoderOnlyBackend,
@@ -88,6 +92,7 @@ __all__ = [
     "PrefixKVCacheBlockManager",
     "PreparedDecodeBatch",
     "PreparedPrefillBatch",
+    "PreparedSampleBatch",
     "SampledToken",
     "SamplingConfig",
     "SamplingParams",
@@ -106,6 +111,9 @@ __all__ = [
     "Tokenizer",
     "VocabularyTokenizer",
     "prepare_decode_batch",
+    "prepare_decode_sequences",
     "prepare_prefill_batch",
+    "prepare_prefill_sequences",
+    "prepare_sample_sequences",
     "reset_sequence_counter",
 ]

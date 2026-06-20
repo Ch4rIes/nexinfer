@@ -167,10 +167,12 @@ block table so future tensor runners can prepare prefill/decode contexts in the
 same shape as Nano-VLLM.
 
 ```python
-from nexinfer import prepare_prefill_batch
+from nexinfer import prepare_prefill_batch, prepare_prefill_sequences
 
 prepared = prepare_prefill_batch(prefill_inputs, block_size=16)
 print(prepared.input_ids, prepared.positions, prepared.slot_mapping)
+
+prepared_from_sequences = prepare_prefill_sequences(sequences, block_size=16)
 ```
 
 ## Optional integrations

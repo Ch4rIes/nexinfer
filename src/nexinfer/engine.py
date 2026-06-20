@@ -7,6 +7,7 @@ from nexinfer.config import GenerationConfig
 from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
+from nexinfer.scheduler import GenerationRequest
 from nexinfer.state import SequenceState
 
 
@@ -67,6 +68,14 @@ class LLMEngine:
         """Generate structured results for multiple prompts."""
 
         return [self.complete(prompt, config) for prompt in prompts]
+
+    def complete_requests(
+        self,
+        requests: list[GenerationRequest],
+    ) -> list[GenerationResult]:
+        """Generate structured results for scheduled requests."""
+
+        return [self.complete(request.prompt, request.config) for request in requests]
 
     def stream(self, prompt: str, config: GenerationConfig | None = None) -> Iterator[str]:
         """Yield decoded text fragments as tokens are generated."""

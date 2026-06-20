@@ -4,6 +4,7 @@ from nexinfer.engine import LLMEngine
 from nexinfer.protocols import DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import SampledToken
+from nexinfer.scheduler import GenerationRequest, RequestQueue, ScheduledBatch
 from nexinfer.state import SequenceState
 from nexinfer.tokenizer import VocabularyTokenizer
 
@@ -11,6 +12,7 @@ __all__ = [
     "DecoderOnlyBackend",
     "GenerationConfig",
     "GenerationResult",
+    "GenerationRequest",
     "KVCacheAllocation",
     "KVCacheBlock",
     "KVCacheBlockAllocator",
@@ -18,6 +20,8 @@ __all__ = [
     "ModelOutput",
     "SampledToken",
     "SamplingConfig",
+    "RequestQueue",
+    "ScheduledBatch",
     "SequenceState",
     "StreamChunk",
     "TokenUsage",

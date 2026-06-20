@@ -64,6 +64,17 @@ allocation = allocator.allocate("request-1", token_count=33)
 print(allocation.block_table)
 ```
 
+The scheduler module starts with a FIFO queue that can form small execution
+batches:
+
+```python
+from nexinfer import RequestQueue
+
+queue = RequestQueue()
+queue.submit("hello")
+batch = queue.schedule(max_requests=8)
+```
+
 ## Development
 
 ```bash

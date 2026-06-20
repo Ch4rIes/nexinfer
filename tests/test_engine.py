@@ -3,6 +3,7 @@ import pytest
 from nexinfer import (
     GenerationConfig,
     LLMEngine,
+    RequestQueue,
     SamplingConfig,
     StreamChunk,
     VocabularyTokenizer,
@@ -166,3 +167,28 @@ def test_complete_batch_returns_one_result_per_prompt() -> None:
 
     assert [result.text for result in results] == ["b", ""]
     assert [result.finish_reason for result in results] == ["stop", "stop"]
+
+
+def test_complete_requests_uses_per_request_config() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {tokenizer.eos_token_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+    queue = RequestQueue()
+    queue.submit(
+        "a",
+        GenerationConfig(
+            max_new_tokens=3,
+            sampling=SamplingConfig(temperature=0),
+            stop_token_ids=(tokenizer.eos_token_id,),
+        ),
+    )
+
+    results = engine.complete_requests(list(queue.schedule(max_requests=1).requests))
+
+    assert [result.text for result in results] == ["b"]

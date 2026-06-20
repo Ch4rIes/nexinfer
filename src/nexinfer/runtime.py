@@ -26,13 +26,19 @@ class InferenceRuntime:
         engine: LLMEngine,
         *,
         max_batch_size: int = 8,
+        max_batch_prompt_tokens: int | None = None,
         queue: RequestQueue | None = None,
     ) -> None:
         if max_batch_size <= 0:
             raise ConfigurationError("max_batch_size must be positive")
+        if max_batch_prompt_tokens is not None and max_batch_prompt_tokens <= 0:
+            raise ConfigurationError(
+                "max_batch_prompt_tokens must be positive when set"
+            )
 
         self._engine = engine
         self._max_batch_size = max_batch_size
+        self._max_batch_prompt_tokens = max_batch_prompt_tokens
         self._queue = queue or RequestQueue()
 
     @property
@@ -60,7 +66,10 @@ class InferenceRuntime:
         return self._queue.cancel(request_id)
 
     def run_once(self) -> tuple[CompletedRequest, ...]:
-        batch = self._queue.schedule(max_requests=self._max_batch_size)
+        batch = self._queue.schedule(
+            max_requests=self._max_batch_size,
+            max_prompt_tokens=self._max_batch_prompt_tokens,
+        )
         results = self._engine.complete_requests(list(batch.requests))
         return tuple(
             CompletedRequest(request_id=request.request_id, result=result)

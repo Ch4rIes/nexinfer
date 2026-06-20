@@ -21,6 +21,7 @@ from nexinfer.errors import (
 from nexinfer.model import LLMConfig, ModelConfig
 from nexinfer.llm import LLM, LLMOutput, LLMStepOutput
 from nexinfer.metrics import RuntimeStats
+from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
 from nexinfer.model_runner import (
     ModelRunner,
     ModelRunnerContext,
@@ -92,6 +93,9 @@ __all__ = [
     "ModelConfig",
     "ModelRunner",
     "ModelRunnerContext",
+    "NanoLLMEngine",
+    "NanoLLMOutput",
+    "NanoLLMStepOutput",
     "NexInferError",
     "PrefillInput",
     "ManagedKVCacheAllocation",

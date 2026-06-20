@@ -54,6 +54,7 @@ class Scheduler:
 
         self.block_manager = block_manager or BlockManager(num_blocks, self.block_size)
         self.block_size = self.block_manager.block_size
+        Sequence.block_size = self.block_size
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
 

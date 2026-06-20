@@ -148,6 +148,10 @@ scheduler.add(Sequence([1, 2, 3]))
 seqs, is_prefill = scheduler.schedule()
 ```
 
+Creating a `Scheduler` updates `Sequence.block_size` to the scheduler's KV-cache
+block size, so sequence block helpers report the same geometry used for
+allocation and decode slot mapping.
+
 For direct Nano-VLLM-style runner orchestration, use `NanoLLMEngine` with a
 `Scheduler` and `ModelRunner`:
 

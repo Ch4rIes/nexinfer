@@ -1,4 +1,41 @@
-from nexinfer import SamplingParams, Scheduler, Sequence, SequenceStatus
+from nexinfer import BlockManager, SamplingParams, Scheduler, Sequence, SequenceStatus
+
+
+def test_scheduler_sets_sequence_block_size_from_config() -> None:
+    old_block_size = Sequence.block_size
+    try:
+        Scheduler(
+            max_num_seqs=1,
+            max_num_batched_tokens=4,
+            num_kvcache_blocks=4,
+            kvcache_block_size=2,
+        )
+        seq = Sequence([1, 2, 3])
+
+        assert Sequence.block_size == 2
+        assert seq.num_blocks == 2
+        assert seq.last_block_num_tokens == 1
+    finally:
+        Sequence.block_size = old_block_size
+
+
+def test_scheduler_sets_sequence_block_size_from_injected_block_manager() -> None:
+    old_block_size = Sequence.block_size
+    try:
+        block_manager = BlockManager(4, 3)
+        Scheduler(
+            max_num_seqs=1,
+            max_num_batched_tokens=4,
+            kvcache_block_size=2,
+            block_manager=block_manager,
+        )
+        seq = Sequence([1, 2, 3, 4])
+
+        assert Sequence.block_size == 3
+        assert seq.num_blocks == 2
+        assert seq.last_block_num_tokens == 1
+    finally:
+        Sequence.block_size = old_block_size
 
 
 def test_scheduler_prefills_decodes_and_deallocates_finished_sequence() -> None:

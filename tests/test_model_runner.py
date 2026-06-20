@@ -1,4 +1,5 @@
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,6 +8,8 @@ from nexinfer import (
     Context,
     DecodeInput,
     DecodeState,
+    KVCacheLayout,
+    KVCacheSlice,
     LLMConfig,
     ModelRunner,
     PrefillInput,
@@ -84,6 +87,21 @@ class NanoStyleModel:
     def compute_logits(self, hidden_states: list[int]) -> list[list[float]]:
         self.compute_logits_calls.append(list(hidden_states))
         return [[0.0, 10.0] for _ in hidden_states]
+
+
+class KVCacheModule:
+    def __init__(self) -> None:
+        self.k_cache: object | None = None
+        self.v_cache: object | None = None
+
+
+class KVCacheModel(FakeModel):
+    def __init__(self, num_modules: int) -> None:
+        super().__init__([])
+        self.kv_modules = [KVCacheModule() for _ in range(num_modules)]
+
+    def modules(self) -> list[object]:
+        return [object(), *self.kv_modules]
 
 
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
@@ -496,6 +514,57 @@ def test_model_runner_warmup_requires_config() -> None:
 
     with pytest.raises(ConfigurationError, match="config"):
         runner.warmup_model()
+
+
+def test_model_runner_allocate_kv_cache_attaches_layer_slices() -> None:
+    model = KVCacheModel(num_modules=2)
+    config = SimpleNamespace(
+        hf_config=SimpleNamespace(
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            hidden_size=16,
+            num_attention_heads=8,
+        ),
+        num_kvcache_blocks=3,
+        tensor_parallel_size=2,
+    )
+    runner = ModelRunner(model, block_size=5, config=config)
+
+    kv_cache = runner.allocate_kv_cache()
+
+    assert isinstance(kv_cache, KVCacheLayout)
+    assert runner.kv_cache is kv_cache
+    assert runner.kv_cache_shape == (2, 2, 3, 5, 2, 2)
+    assert model.kv_modules[0].k_cache == KVCacheSlice("k", 0, (3, 5, 2, 2))
+    assert model.kv_modules[0].v_cache == KVCacheSlice("v", 0, (3, 5, 2, 2))
+    assert model.kv_modules[1].k_cache == KVCacheSlice("k", 1, (3, 5, 2, 2))
+    assert model.kv_modules[1].v_cache == KVCacheSlice("v", 1, (3, 5, 2, 2))
+
+
+def test_model_runner_allocate_kv_cache_requires_config_and_hf_metadata() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    with pytest.raises(ConfigurationError, match="config"):
+        runner.allocate_kv_cache()
+    with pytest.raises(ConfigurationError, match="hf_config"):
+        runner.allocate_kv_cache(SimpleNamespace(num_kvcache_blocks=1))
+
+
+def test_model_runner_allocate_kv_cache_uses_explicit_head_dim() -> None:
+    runner = ModelRunner(KVCacheModel(num_modules=1), block_size=4)
+    config = SimpleNamespace(
+        hf_config=SimpleNamespace(
+            num_hidden_layers=1,
+            num_key_value_heads=2,
+            head_dim=7,
+        ),
+        num_kvcache_blocks=3,
+        tensor_parallel_size=1,
+    )
+
+    runner.allocate_kv_cache(config)
+
+    assert runner.kv_cache_shape == (2, 1, 3, 4, 2, 7)
 
 
 def test_model_runner_call_rejects_unknown_method() -> None:

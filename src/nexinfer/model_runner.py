@@ -44,6 +44,31 @@ class PreparedSampleBatch:
 
 
 @dataclass(frozen=True, slots=True)
+class KVCacheSlice:
+    """A lightweight reference to one layer's KV-cache tensor slice."""
+
+    kind: str
+    layer_id: int
+    shape: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KVCacheLayout:
+    """CPU-safe KV-cache layout used when no tensor factory is supplied."""
+
+    shape: tuple[int, ...]
+
+    def __getitem__(self, index: tuple[int, int]) -> KVCacheSlice:
+        cache_kind, layer_id = index
+        if cache_kind not in (0, 1):
+            raise IndexError("cache kind must be 0 for keys or 1 for values")
+        if not 0 <= layer_id < self.shape[1]:
+            raise IndexError("layer id out of range")
+        kind = "k" if cache_kind == 0 else "v"
+        return KVCacheSlice(kind=kind, layer_id=layer_id, shape=self.shape[2:])
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRunnerContext:
     """Prepared runner context for the latest prefill or decode batch."""
 
@@ -102,6 +127,8 @@ class ModelRunner:
         self.config = config
         self.last_context: ModelRunnerContext | None = None
         self.last_sample_batch: PreparedSampleBatch | None = None
+        self.kv_cache: Any | None = None
+        self.kv_cache_shape: tuple[int, ...] | None = None
 
     def call(self, method_name: str, *args: Any) -> Any:
         """Call a runner method by name, matching Nano-VLLM's control path."""
@@ -141,6 +168,63 @@ class ModelRunner:
         for sequence in sequences:
             sequence.num_scheduled_tokens = seq_len
         self.run(sequences, True)
+
+    def allocate_kv_cache(
+        self,
+        config: Any | None = None,
+        *,
+        cache_factory: Any | None = None,
+    ) -> Any:
+        """Allocate a Nano-VLLM-style KV-cache layout and attach layer slices."""
+
+        config = config or self.config
+        if config is None:
+            raise ConfigurationError("config is required to allocate KV cache")
+        hf_config = getattr(config, "hf_config", None)
+        if hf_config is None:
+            raise ConfigurationError("hf_config is required to allocate KV cache")
+        num_blocks = _positive_config_int(config, "num_kvcache_blocks")
+        world_size = _positive_config_int(config, "tensor_parallel_size")
+        num_layers = _positive_attr_int(hf_config, "num_hidden_layers")
+        num_key_value_heads = _positive_attr_int(
+            hf_config,
+            "num_key_value_heads",
+        )
+        if num_key_value_heads % world_size != 0:
+            raise ConfigurationError("num_key_value_heads must divide world size")
+        num_kv_heads = num_key_value_heads // world_size
+        head_dim = getattr(hf_config, "head_dim", None)
+        if head_dim is None:
+            head_dim = _positive_attr_int(hf_config, "hidden_size") // _positive_attr_int(
+                hf_config,
+                "num_attention_heads",
+            )
+        head_dim = int(head_dim)
+        if head_dim <= 0:
+            raise ConfigurationError("head_dim must be positive")
+
+        shape = (
+            2,
+            num_layers,
+            num_blocks,
+            self.block_size,
+            num_kv_heads,
+            head_dim,
+        )
+        self.kv_cache_shape = shape
+        self.kv_cache = (
+            cache_factory(shape) if cache_factory is not None else KVCacheLayout(shape)
+        )
+        layer_id = 0
+        modules = getattr(self.model, "modules", None)
+        for module in modules() if callable(modules) else ():
+            if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
+                if layer_id >= num_layers:
+                    raise ConfigurationError("more KV-cache modules than layers")
+                module.k_cache = self.kv_cache[0, layer_id]
+                module.v_cache = self.kv_cache[1, layer_id]
+                layer_id += 1
+        return self.kv_cache
 
     def run(
         self,
@@ -442,6 +526,13 @@ def _validate_block_size(block_size: int) -> None:
 
 def _positive_config_int(config: Any, name: str) -> int:
     value = int(getattr(config, name))
+    if value <= 0:
+        raise ConfigurationError(f"{name} must be positive")
+    return value
+
+
+def _positive_attr_int(target: Any, name: str) -> int:
+    value = int(getattr(target, name))
     if value <= 0:
         raise ConfigurationError(f"{name} must be positive")
     return value

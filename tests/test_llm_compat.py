@@ -33,6 +33,20 @@ class CountingBigramBackend(BigramBackend):
         return super().begin_batch(batch)
 
 
+class ClosingBigramBackend(BigramBackend):
+    def __init__(
+        self,
+        *,
+        vocab_size: int,
+        transitions: Mapping[int | None, Mapping[int, float]] | None = None,
+    ) -> None:
+        super().__init__(vocab_size=vocab_size, transitions=transitions)
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 def test_llm_generate_returns_nano_vllm_style_outputs() -> None:
     tokenizer = VocabularyTokenizer(["hello", "world", "<eos>"], eos_token="<eos>")
     backend = BigramBackend(
@@ -314,3 +328,49 @@ def test_llm_queue_accepts_token_id_prompt_requests() -> None:
         outputs.update(step_outputs)
 
     assert outputs == {request_id: [tokenizer.token_id("world")]}
+
+
+def test_llm_exit_closes_backend_and_rejects_later_use() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    backend = ClosingBigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+        },
+    )
+    llm = LLM(backend=backend, tokenizer=tokenizer)
+
+    llm.add_request("a", SamplingParams(temperature=0.01, max_tokens=1))
+    assert llm.is_finished() is False
+
+    llm.exit()
+    llm.exit()
+
+    assert backend.close_calls == 1
+    assert llm.is_finished() is True
+    with pytest.raises(ConfigurationError, match="closed"):
+        llm.add_request("a", SamplingParams(temperature=0.01, max_tokens=1))
+    with pytest.raises(ConfigurationError, match="closed"):
+        llm.step()
+    with pytest.raises(ConfigurationError, match="closed"):
+        llm.generate(["a"], SamplingParams(temperature=0.01, max_tokens=1))
+
+
+def test_llm_context_manager_closes_backend() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "<eos>"], eos_token="<eos>")
+    backend = ClosingBigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+        },
+    )
+
+    with LLM(backend=backend, tokenizer=tokenizer) as llm:
+        outputs = llm.generate(
+            ["a"],
+            SamplingParams(temperature=0.01, max_tokens=1),
+            use_tqdm=False,
+        )
+
+    assert outputs == [{"text": "b", "token_ids": [tokenizer.token_id("b")]}]
+    assert backend.close_calls == 1

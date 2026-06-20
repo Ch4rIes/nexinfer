@@ -101,6 +101,9 @@ while not llm.is_finished():
         print(seq_id, token_ids)
 ```
 
+Call `llm.exit()` when you are done with a long-lived model, or use `LLM` as a
+context manager so backend resources are released automatically.
+
 The cache module includes early block-table primitives for future paged KV-cache
 work. `PrefixKVCacheBlockManager` adds the Nano-VLLM-style pieces: ref-counted
 blocks, cached-prefix hashes, append reservation, and deallocation:

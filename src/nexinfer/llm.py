@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 from collections.abc import Sequence
 from dataclasses import fields, replace
 from itertools import count
@@ -67,13 +68,24 @@ class LLM:
         eos_token_id = _eos_token_id(tokenizer)
         if eos_token_id is not None:
             self.config.eos = eos_token_id
+        self._backend = backend
         self.engine = LLMEngine(backend, tokenizer)
         self._runtime = self._build_runtime()
         self._request_ids = count()
+        self._closed = False
+        self._exit_callback = self.exit
+        atexit.register(self._exit_callback)
 
     @property
     def tokenizer(self) -> Tokenizer:
         return self.engine.tokenizer
+
+    def __enter__(self) -> "LLM":
+        self._ensure_open()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.exit()
 
     def generate(
         self,
@@ -83,6 +95,7 @@ class LLM:
     ) -> list[LLMOutput]:
         """Generate Nano-VLLM-style outputs for text or token-id prompts."""
 
+        self._ensure_open()
         prompt_list = list(prompts)
         params = self._normalize_sampling_params(sampling_params, len(prompt_list))
 
@@ -130,6 +143,7 @@ class LLM:
     ) -> int:
         """Add one request to the Nano-VLLM-style internal queue."""
 
+        self._ensure_open()
         request_id = next(self._request_ids)
         config = (sampling_params or SamplingParams()).to_generation_config(
             eos_token_id=_eos_token_id(self.tokenizer),
@@ -141,6 +155,7 @@ class LLM:
     def step(self) -> LLMStepOutput:
         """Run one scheduler step and return completed outputs plus token count."""
 
+        self._ensure_open()
         completed = self._runtime.run_once()
         outputs = [
             (int(item.request_id), item.result.generated_token_ids)
@@ -151,7 +166,23 @@ class LLM:
     def is_finished(self) -> bool:
         """Return whether the internal request queue is empty."""
 
+        if self._closed:
+            return True
         return self._runtime.pending_requests == 0
+
+    def exit(self) -> None:
+        """Release backend resources owned by this LLM."""
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            atexit.unregister(self._exit_callback)
+        except ValueError:
+            pass
+        _call_optional_cleanup(self._backend)
+
+    close = exit
 
     def _normalize_sampling_params(
         self,
@@ -196,6 +227,10 @@ class LLM:
             block_manager=block_manager,
         )
 
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise ConfigurationError("LLM is closed")
+
 
 def _is_token_id_prompt(prompt: object) -> bool:
     if isinstance(prompt, str):
@@ -210,6 +245,14 @@ def _eos_token_id(tokenizer: Tokenizer) -> int | None:
     if eos_token_id is None:
         return None
     return int(eos_token_id)
+
+
+def _call_optional_cleanup(target: object) -> None:
+    for method_name in ("exit", "close"):
+        method = getattr(target, method_name, None)
+        if callable(method):
+            method()
+            return
 
 
 class _NoopProgress:

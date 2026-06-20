@@ -99,6 +99,12 @@ class TorchCausalLMBackend:
         self._last_context = ModelRunnerContext.from_decode(prepared)
         return [self.step(item.token_id, item.state) for item in inputs]
 
+    def close(self) -> None:
+        """Release references to model-owned runtime state."""
+
+        self._model = None
+        self._last_context = None
+
     def _forward(
         self,
         input_ids: Sequence[int],

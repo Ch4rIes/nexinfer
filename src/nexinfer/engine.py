@@ -7,6 +7,7 @@ from nexinfer.config import GenerationConfig
 from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
+from nexinfer.state import SequenceState
 
 
 class LLMEngine:
@@ -39,30 +40,22 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        (
-            generated_token_ids,
-            generated_token_logprobs,
-            finish_reason,
-        ) = self._generate_completion_token_ids(
+        sequence = self._generate_sequence(
             prompt_token_ids,
             config,
         )
-        token_ids = (
-            [*prompt_token_ids, *generated_token_ids]
-            if config.include_prompt
-            else generated_token_ids
-        )
+        token_ids = sequence.output_token_ids(include_prompt=config.include_prompt)
 
         return GenerationResult(
             text=self._tokenizer.decode(token_ids),
             token_ids=token_ids,
-            prompt_token_ids=prompt_token_ids,
-            generated_token_ids=generated_token_ids,
-            generated_token_logprobs=generated_token_logprobs,
-            finish_reason=finish_reason,
+            prompt_token_ids=sequence.prompt_token_ids,
+            generated_token_ids=sequence.generated_token_ids,
+            generated_token_logprobs=sequence.generated_token_logprobs,
+            finish_reason=sequence.finish_reason or "length",
             usage=TokenUsage(
-                prompt_tokens=len(prompt_token_ids),
-                completion_tokens=len(generated_token_ids),
+                prompt_tokens=len(sequence.prompt_token_ids),
+                completion_tokens=sequence.completion_tokens,
             ),
         )
 
@@ -90,23 +83,19 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        (
-            generated_token_ids,
-            generated_token_logprobs,
-            finish_reason,
-        ) = self._generate_completion_token_ids(
+        sequence = self._generate_sequence(
             prompt_token_ids,
             config,
         )
 
-        for index, token_id in enumerate(generated_token_ids):
-            is_last = index == len(generated_token_ids) - 1
+        for index, token_id in enumerate(sequence.generated_token_ids):
+            is_last = index == len(sequence.generated_token_ids) - 1
             yield StreamChunk(
                 text=self._tokenizer.decode([token_id]),
                 token_id=token_id,
                 index=index,
-                logprob=generated_token_logprobs[index],
-                finish_reason=finish_reason if is_last else None,
+                logprob=sequence.generated_token_logprobs[index],
+                finish_reason=sequence.finish_reason if is_last else None,
             )
 
     def generate_token_ids(
@@ -118,28 +107,26 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        generated_token_ids, _, _ = self._generate_completion_token_ids(
+        sequence = self._generate_sequence(
             prompt_token_ids,
             config,
         )
-        if config.include_prompt:
-            return [*prompt_token_ids, *generated_token_ids]
-        return generated_token_ids
+        return sequence.output_token_ids(include_prompt=config.include_prompt)
 
-    def _generate_completion_token_ids(
+    def _generate_sequence(
         self,
         input_ids: list[int],
         config: GenerationConfig,
-    ) -> tuple[list[int], list[float], str]:
+    ) -> SequenceState:
+        sequence = SequenceState(prompt_token_ids=input_ids)
         if config.max_new_tokens == 0:
-            return [], [], "length"
+            sequence.finish("length")
+            return sequence
 
         output = self._backend.begin(input_ids)
         _validate_vocab_size(output.logits, self._backend.vocab_size)
 
         rng = random.Random(config.sampling.seed)
-        generated: list[int] = []
-        generated_logprobs: list[float] = []
         stop_token_ids = set(config.stop_token_ids)
 
         for _ in range(config.max_new_tokens):
@@ -147,16 +134,16 @@ class LLMEngine:
             token_id = sampled.token_id
             if token_id in stop_token_ids:
                 if config.include_stop_token:
-                    generated.append(token_id)
-                    generated_logprobs.append(sampled.logprob)
-                return generated, generated_logprobs, "stop"
+                    sequence.append(token_id, sampled.logprob)
+                sequence.finish("stop")
+                return sequence
 
-            generated.append(token_id)
-            generated_logprobs.append(sampled.logprob)
+            sequence.append(token_id, sampled.logprob)
             output = self._backend.step(token_id, output.state)
             _validate_vocab_size(output.logits, self._backend.vocab_size)
 
-        return generated, generated_logprobs, "length"
+        sequence.finish("length")
+        return sequence
 
 
 def _validate_vocab_size(logits: object, vocab_size: int) -> None:

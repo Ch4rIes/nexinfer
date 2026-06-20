@@ -39,6 +39,7 @@ from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
 from nexinfer.sampling_params import SamplingParams
+from nexinfer.sequence import Sequence, SequenceStatus, reset_sequence_counter
 from nexinfer.scheduler import (
     ActiveScheduler,
     ActiveSequence,
@@ -97,11 +98,14 @@ __all__ = [
     "ScheduledSequence",
     "SchedulePhase",
     "SchedulerError",
+    "Sequence",
     "SequenceState",
+    "SequenceStatus",
     "StreamChunk",
     "TokenUsage",
     "Tokenizer",
     "VocabularyTokenizer",
     "prepare_decode_batch",
     "prepare_prefill_batch",
+    "reset_sequence_counter",
 ]

@@ -20,6 +20,7 @@ remote backends without rewriting sampling and stop handling.
 - simple batch APIs
 - explicit sequence and decode state
 - optional batched backend prefill/decode contract with scheduled-token metadata
+- Nano-VLLM-style model-runner batch preparation
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters
@@ -129,6 +130,13 @@ backend path runs model prefill when the final prompt chunk is admitted.
 Backend batch inputs carry the scheduled token count, cached-token count, and
 block table so future tensor runners can prepare prefill/decode contexts in the
 same shape as Nano-VLLM.
+
+```python
+from nexinfer import prepare_prefill_batch
+
+prepared = prepare_prefill_batch(prefill_inputs, block_size=16)
+print(prepared.input_ids, prepared.positions, prepared.slot_mapping)
+```
 
 ## Optional integrations
 

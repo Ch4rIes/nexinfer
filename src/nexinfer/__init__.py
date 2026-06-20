@@ -18,6 +18,12 @@ from nexinfer.errors import (
 )
 from nexinfer.model import ModelConfig
 from nexinfer.metrics import RuntimeStats
+from nexinfer.model_runner import (
+    PreparedDecodeBatch,
+    PreparedPrefillBatch,
+    prepare_decode_batch,
+    prepare_prefill_batch,
+)
 from nexinfer.protocols import (
     BatchedDecoderOnlyBackend,
     DecodeInput,
@@ -71,6 +77,8 @@ __all__ = [
     "ManagedKVCacheAllocation",
     "ManagedKVCacheBlock",
     "PrefixKVCacheBlockManager",
+    "PreparedDecodeBatch",
+    "PreparedPrefillBatch",
     "SampledToken",
     "SamplingConfig",
     "RequestQueue",
@@ -85,4 +93,6 @@ __all__ = [
     "TokenUsage",
     "Tokenizer",
     "VocabularyTokenizer",
+    "prepare_decode_batch",
+    "prepare_prefill_batch",
 ]

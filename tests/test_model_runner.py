@@ -4,6 +4,7 @@ import pytest
 
 from nexinfer import (
     ConfigurationError,
+    Context,
     DecodeInput,
     DecodeState,
     ModelRunner,
@@ -11,6 +12,7 @@ from nexinfer import (
     SamplingParams,
     Sampler,
     Sequence,
+    get_context,
     prepare_decode_batch,
     prepare_decode_sequences,
     prepare_prefill_batch,
@@ -41,6 +43,21 @@ class FakeModel:
     ) -> list[list[float]]:
         self.calls.append((list(input_ids), list(positions), is_prefill))
         return self.logits
+
+
+class ContextCapturingModel(FakeModel):
+    def __init__(self, logits: list[list[float]]) -> None:
+        super().__init__(logits)
+        self.contexts: list[Context] = []
+
+    def run_model(
+        self,
+        input_ids: list[int],
+        positions: list[int],
+        is_prefill: bool,
+    ) -> list[list[float]]:
+        self.contexts.append(get_context())
+        return super().run_model(input_ids, positions, is_prefill)
 
 
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
@@ -258,6 +275,31 @@ def test_model_runner_run_prefill_prepares_context_and_samples_tokens() -> None:
     assert runner.last_context.slot_mapping == [7, 8]
 
 
+def test_model_runner_sets_and_resets_prefill_attention_context() -> None:
+    sequence = Sequence([10, 11, 12], SamplingParams(temperature=1.0))
+    sequence.num_cached_tokens = 1
+    sequence.num_scheduled_tokens = 2
+    sequence.block_table.extend([3, 4])
+    model = ContextCapturingModel([[0.0, 10.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    runner.run([sequence], is_prefill=True)
+
+    context = model.contexts[0]
+    assert context.is_prefill is True
+    assert context.cu_seqlens_q == [0, 2]
+    assert context.cu_seqlens_k == [0, 3]
+    assert context.max_seqlen_q == 2
+    assert context.max_seqlen_k == 3
+    assert context.slot_mapping == [7, 8]
+    assert context.block_tables == [[3, 4]]
+    assert get_context() == Context()
+
+
 def test_model_runner_run_decode_prepares_context_and_samples_tokens() -> None:
     first = Sequence([10, 11], SamplingParams(temperature=1.0))
     first.append_token(12)
@@ -284,6 +326,30 @@ def test_model_runner_run_decode_prepares_context_and_samples_tokens() -> None:
     assert runner.last_context.input_ids == [12, 20]
     assert runner.last_context.positions == [2, 0]
     assert runner.last_context.context_lengths == [3, 1]
+
+
+def test_model_runner_sets_and_resets_decode_attention_context() -> None:
+    sequence = Sequence([10, 11], SamplingParams(temperature=1.0))
+    sequence.append_token(12)
+    sequence.num_scheduled_tokens = 1
+    sequence.block_table.extend([3, 4])
+    model = ContextCapturingModel([[10.0, 0.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    runner.run([sequence], is_prefill=False)
+
+    context = model.contexts[0]
+    assert context.is_prefill is False
+    assert context.cu_seqlens_q is None
+    assert context.cu_seqlens_k is None
+    assert context.slot_mapping == [8]
+    assert context.context_lens == [3]
+    assert context.block_tables == [[3, 4]]
+    assert get_context() == Context()
 
 
 def test_model_runner_accepts_callable_model() -> None:

@@ -4,6 +4,7 @@ from collections.abc import Sequence as SequenceCollection
 from dataclasses import dataclass
 from typing import Any
 
+from nexinfer.context import reset_context, set_context
 from nexinfer.errors import ConfigurationError
 from nexinfer.protocols import DecodeInput, DecodeState, PrefillInput
 from nexinfer.sampling import Sampler
@@ -113,13 +114,18 @@ class ModelRunner:
         if is_prefill:
             prepared = prepare_prefill_sequences(sequences, block_size=self.block_size)
             self.last_context = ModelRunnerContext.from_prefill(prepared)
+            self._set_prefill_context(prepared)
         else:
             prepared = prepare_decode_sequences(sequences, block_size=self.block_size)
             self.last_context = ModelRunnerContext.from_decode(prepared)
+            self._set_decode_context(prepared)
 
         sample_batch = prepare_sample_sequences(sequences)
         self.last_sample_batch = sample_batch
-        logits = self.run_model(prepared.input_ids, prepared.positions, is_prefill)
+        try:
+            logits = self.run_model(prepared.input_ids, prepared.positions, is_prefill)
+        finally:
+            reset_context()
         if len(logits) != len(sequences):
             raise ConfigurationError("model must return one logits row per sequence")
         return self.sampler(logits, sample_batch.temperatures)
@@ -138,6 +144,25 @@ class ModelRunner:
         if callable(self.model):
             return self.model(input_ids, positions, is_prefill)
         raise ConfigurationError("model must be callable or expose run_model")
+
+    def _set_prefill_context(self, batch: PreparedPrefillBatch) -> None:
+        set_context(
+            True,
+            cu_seqlens_q=batch.cu_seqlens_q,
+            cu_seqlens_k=batch.cu_seqlens_k,
+            max_seqlen_q=batch.max_seqlen_q,
+            max_seqlen_k=batch.max_seqlen_k,
+            slot_mapping=batch.slot_mapping,
+            block_tables=batch.block_tables or None,
+        )
+
+    def _set_decode_context(self, batch: PreparedDecodeBatch) -> None:
+        set_context(
+            False,
+            slot_mapping=batch.slot_mapping,
+            context_lens=batch.context_lengths,
+            block_tables=batch.block_tables or None,
+        )
 
 
 def prepare_prefill_batch(

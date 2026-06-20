@@ -9,6 +9,7 @@ from nexinfer.cache import (
     PrefixKVCacheBlockManager,
 )
 from nexinfer.config import GenerationConfig, SamplingConfig
+from nexinfer.context import Context, get_context, reset_context, set_context
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import (
     BackendError,
@@ -71,6 +72,7 @@ __all__ = [
     "CacheError",
     "ConfigurationError",
     "CompletedRequest",
+    "Context",
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",
@@ -115,10 +117,13 @@ __all__ = [
     "TokenUsage",
     "Tokenizer",
     "VocabularyTokenizer",
+    "get_context",
     "prepare_decode_batch",
     "prepare_decode_sequences",
     "prepare_prefill_batch",
     "prepare_prefill_sequences",
     "prepare_sample_sequences",
     "reset_sequence_counter",
+    "reset_context",
+    "set_context",
 ]

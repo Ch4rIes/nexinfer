@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import fields, replace
 from itertools import count
+from time import perf_counter
 from typing import Any, TypedDict
 
 from nexinfer.cache import PrefixKVCacheBlockManager
@@ -82,23 +83,45 @@ class LLM:
     ) -> list[LLMOutput]:
         """Generate Nano-VLLM-style outputs for text or token-id prompts."""
 
-        del use_tqdm
         prompt_list = list(prompts)
         params = self._normalize_sampling_params(sampling_params, len(prompt_list))
-        eos_token_id = _eos_token_id(self.tokenizer)
 
-        outputs: list[LLMOutput] = []
+        request_ids: list[int] = []
         for prompt, prompt_params in zip(prompt_list, params, strict=True):
-            config = prompt_params.to_generation_config(
-                eos_token_id=eos_token_id,
-                max_total_tokens=self.config.max_model_len,
-            )
-            if _is_token_id_prompt(prompt):
-                result = self.engine.complete_token_ids(prompt, config)
-            else:
-                result = self.engine.complete(str(prompt), config)
-            outputs.append({"text": result.text, "token_ids": result.token_ids})
-        return outputs
+            request_ids.append(self.add_request(prompt, prompt_params))
+
+        outputs: dict[int, list[int]] = {}
+        prefill_throughput = 0.0
+        decode_throughput = 0.0
+        progress = _progress_bar(total=len(prompt_list), enabled=use_tqdm)
+        try:
+            while not self.is_finished():
+                start = perf_counter()
+                step_outputs, num_tokens = self.step()
+                elapsed = max(perf_counter() - start, 1e-12)
+                if num_tokens > 0:
+                    prefill_throughput = num_tokens / elapsed
+                elif num_tokens < 0:
+                    decode_throughput = -num_tokens / elapsed
+                progress.set_postfix(
+                    {
+                        "Prefill": f"{int(prefill_throughput)}tok/s",
+                        "Decode": f"{int(decode_throughput)}tok/s",
+                    }
+                )
+                for seq_id, token_ids in step_outputs:
+                    outputs[seq_id] = token_ids
+                    progress.update(1)
+        finally:
+            progress.close()
+
+        return [
+            {
+                "text": self.tokenizer.decode(outputs[request_id]),
+                "token_ids": outputs[request_id],
+            }
+            for request_id in request_ids
+        ]
 
     def add_request(
         self,
@@ -187,6 +210,32 @@ def _eos_token_id(tokenizer: Tokenizer) -> int | None:
     if eos_token_id is None:
         return None
     return int(eos_token_id)
+
+
+class _NoopProgress:
+    def set_postfix(self, values: dict[str, str]) -> None:
+        pass
+
+    def update(self, amount: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _progress_bar(*, total: int, enabled: bool) -> Any:
+    if not enabled:
+        return _NoopProgress()
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        return _NoopProgress()
+    return tqdm(
+        total=total,
+        desc="Generating",
+        dynamic_ncols=True,
+        disable=not enabled,
+    )
 
 
 _CONFIG_FIELD_NAMES = {field.name for field in fields(LLMConfig)}

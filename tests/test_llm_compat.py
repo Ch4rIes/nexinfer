@@ -1,13 +1,36 @@
+from collections.abc import Mapping, Sequence
+
 import pytest
 
 from nexinfer import (
     ConfigurationError,
     LLM,
     LLMConfig,
+    ModelOutput,
+    PrefillInput,
     SamplingParams,
     VocabularyTokenizer,
 )
 from nexinfer.backends import BigramBackend
+
+
+class CountingBigramBackend(BigramBackend):
+    def __init__(
+        self,
+        *,
+        vocab_size: int,
+        transitions: Mapping[int | None, Mapping[int, float]],
+    ) -> None:
+        super().__init__(vocab_size=vocab_size, transitions=transitions)
+        self.begin_batch_sizes: list[int] = []
+
+    def begin_batch(
+        self,
+        inputs: Sequence[PrefillInput | Sequence[int]],
+    ) -> list[ModelOutput]:
+        batch = list(inputs)
+        self.begin_batch_sizes.append(len(batch))
+        return super().begin_batch(batch)
 
 
 def test_llm_generate_returns_nano_vllm_style_outputs() -> None:
@@ -78,6 +101,33 @@ def test_llm_generate_accepts_per_prompt_sampling_params() -> None:
         {"text": "b", "token_ids": [tokenizer.token_id("b")]},
         {"text": "", "token_ids": []},
     ]
+
+
+def test_llm_generate_uses_queue_scheduler_batching() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "x", "y", "<eos>"], eos_token="<eos>")
+    backend = CountingBigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 100.0},
+            tokenizer.token_id("b"): {tokenizer.eos_token_id: 100.0},
+            tokenizer.token_id("x"): {tokenizer.token_id("y"): 100.0},
+            tokenizer.token_id("y"): {tokenizer.eos_token_id: 100.0},
+        },
+    )
+    llm = LLM(backend=backend, tokenizer=tokenizer, max_num_seqs=2)
+
+    outputs = llm.generate(
+        ["a", "x"],
+        SamplingParams(temperature=0.01, max_tokens=4),
+        use_tqdm=False,
+    )
+
+    assert outputs == [
+        {"text": "b", "token_ids": [tokenizer.token_id("b")]},
+        {"text": "y", "token_ids": [tokenizer.token_id("y")]},
+    ]
+    assert backend.begin_batch_sizes == [2]
+    assert llm.add_request("a", SamplingParams(temperature=0.01, max_tokens=1)) == 2
 
 
 def test_sampling_params_can_ignore_eos() -> None:

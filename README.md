@@ -72,7 +72,8 @@ for result in results:
     print(result.text)
 ```
 
-Use the Nano-VLLM-style facade when you want a familiar list-in/list-out API:
+Use the Nano-VLLM-style facade when you want a familiar list-in/list-out API
+backed by the same queued scheduler as `add_request`/`step`:
 
 ```python
 from nexinfer import LLM, SamplingParams

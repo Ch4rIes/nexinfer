@@ -93,11 +93,13 @@ class ModelRunner:
         *,
         block_size: int,
         sampler: Sampler | None = None,
+        config: Any | None = None,
     ) -> None:
         _validate_block_size(block_size)
         self.model = model
         self.block_size = block_size
         self.sampler = sampler or Sampler()
+        self.config = config
         self.last_context: ModelRunnerContext | None = None
         self.last_sample_batch: PreparedSampleBatch | None = None
 
@@ -119,6 +121,26 @@ class ModelRunner:
                 return
 
     close = exit
+
+    def warmup_model(self, config: Any | None = None) -> None:
+        """Run a Nano-VLLM-style synthetic prefill warmup batch."""
+
+        config = config or self.config
+        if config is None:
+            raise ConfigurationError("config is required to warm up model")
+
+        max_num_batched_tokens = _positive_config_int(
+            config,
+            "max_num_batched_tokens",
+        )
+        max_model_len = _positive_config_int(config, "max_model_len")
+        max_num_seqs = _positive_config_int(config, "max_num_seqs")
+        seq_len = min(max_num_batched_tokens, max_model_len)
+        num_seqs = min(max_num_batched_tokens // seq_len, max_num_seqs)
+        sequences = [RunnerSequence([0] * seq_len) for _ in range(num_seqs)]
+        for sequence in sequences:
+            sequence.num_scheduled_tokens = seq_len
+        self.run(sequences, True)
 
     def run(
         self,
@@ -416,6 +438,13 @@ def _slot_mapping(
 def _validate_block_size(block_size: int) -> None:
     if block_size <= 0:
         raise ConfigurationError("block_size must be positive")
+
+
+def _positive_config_int(config: Any, name: str) -> int:
+    value = int(getattr(config, name))
+    if value <= 0:
+        raise ConfigurationError(f"{name} must be positive")
+    return value
 
 
 def _decode_token_count(sequence: RunnerSequence) -> int:

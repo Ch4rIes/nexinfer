@@ -7,6 +7,7 @@ from nexinfer import (
     Context,
     DecodeInput,
     DecodeState,
+    LLMConfig,
     ModelRunner,
     PrefillInput,
     SamplingParams,
@@ -464,6 +465,37 @@ def test_model_runner_call_dispatches_methods_by_name() -> None:
     )
 
     assert runner.call("run", [sequence], True) == [1]
+
+
+def test_model_runner_warmup_uses_configured_synthetic_prefill_batch() -> None:
+    model = FakeModel([[0.0, 10.0], [0.0, 10.0], [0.0, 10.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+        config=LLMConfig(
+            "tiny",
+            max_num_batched_tokens=6,
+            max_model_len=2,
+            max_num_seqs=4,
+        ),
+    )
+
+    runner.call("warmup_model")
+
+    assert model.calls == [([0, 0, 0, 0, 0, 0], [0, 1, 0, 1, 0, 1], True)]
+    assert runner.last_context is not None
+    assert runner.last_context.max_seqlen_q == 2
+    assert runner.last_context.max_seqlen_k == 2
+    assert runner.last_sample_batch is not None
+    assert runner.last_sample_batch.temperatures == [1.0, 1.0, 1.0]
+
+
+def test_model_runner_warmup_requires_config() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    with pytest.raises(ConfigurationError, match="config"):
+        runner.warmup_model()
 
 
 def test_model_runner_call_rejects_unknown_method() -> None:

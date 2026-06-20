@@ -14,8 +14,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+safetensors = ["safetensors>=0.4"]
 transformers = ["transformers>=4.40"]
-torch = ["torch>=2.2", "transformers>=4.40"]
+torch = ["torch>=2.2", "transformers>=4.40", "safetensors>=0.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

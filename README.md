@@ -236,6 +236,12 @@ Install the optional PyTorch backend dependencies:
 python -m pip install -e ".[torch]"
 ```
 
+Install only safetensors loader support:
+
+```bash
+python -m pip install -e ".[safetensors]"
+```
+
 Then load compatible components:
 
 ```python

@@ -70,6 +70,20 @@ class ClosingModel(FakeModel):
         self.close_calls += 1
 
 
+class NanoStyleModel:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[int], list[int]]] = []
+        self.compute_logits_calls: list[list[int]] = []
+
+    def __call__(self, input_ids: list[int], positions: list[int]) -> list[int]:
+        self.calls.append((list(input_ids), list(positions)))
+        return [token_id + position for token_id, position in zip(input_ids, positions)]
+
+    def compute_logits(self, hidden_states: list[int]) -> list[list[float]]:
+        self.compute_logits_calls.append(list(hidden_states))
+        return [[0.0, 10.0] for _ in hidden_states]
+
+
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
     prepared = prepare_prefill_batch(
         [
@@ -402,6 +416,22 @@ def test_model_runner_accepts_callable_model() -> None:
 
     assert runner.run([sequence], is_prefill=True) == [1]
     assert calls == [([1], [0], True)]
+
+
+def test_model_runner_accepts_nano_style_model_compute_logits_contract() -> None:
+    sequence = Sequence([10, 11], SamplingParams(temperature=1.0))
+    sequence.num_scheduled_tokens = 1
+    sequence.block_table.extend([3])
+    model = NanoStyleModel()
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    assert runner.run([sequence], is_prefill=True) == [1]
+    assert model.calls == [([10], [0])]
+    assert model.compute_logits_calls == [[10]]
 
 
 def test_model_runner_call_dispatches_methods_by_name() -> None:

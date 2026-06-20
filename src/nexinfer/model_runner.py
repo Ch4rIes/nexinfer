@@ -186,6 +186,10 @@ class ModelRunner:
         run_model = getattr(self.model, "run_model", None)
         if callable(run_model):
             return run_model(input_ids, positions, is_prefill)
+        compute_logits = getattr(self.model, "compute_logits", None)
+        if callable(compute_logits) and callable(self.model):
+            hidden_states = self.model(input_ids, positions)
+            return compute_logits(hidden_states)
         if callable(self.model):
             return self.model(input_ids, positions, is_prefill)
         raise ConfigurationError("model must be callable or expose run_model")

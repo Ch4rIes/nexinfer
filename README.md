@@ -29,6 +29,7 @@ remote backends without rewriting sampling and stop handling.
 - Nano-VLLM-style model-runner batch preparation
 - Nano-VLLM-style model-runner orchestration over prepared sequence batches
 - Nano-VLLM-style `ModelRunner.call` and prepare methods
+- Nano-VLLM-style model `compute_logits` runner contract
 - Nano-VLLM-style attention context utilities for runner calls
 - Nano-VLLM-compatible `Sequence` scheduler facade
 - Nano-VLLM-style engine loop over `Scheduler` and `ModelRunner`

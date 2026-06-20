@@ -21,6 +21,7 @@ from nexinfer.model import LLMConfig, ModelConfig
 from nexinfer.llm import LLM, LLMOutput, LLMStepOutput
 from nexinfer.metrics import RuntimeStats
 from nexinfer.model_runner import (
+    ModelRunner,
     ModelRunnerContext,
     PreparedDecodeBatch,
     PreparedPrefillBatch,
@@ -86,6 +87,7 @@ __all__ = [
     "LLMStepOutput",
     "ModelOutput",
     "ModelConfig",
+    "ModelRunner",
     "ModelRunnerContext",
     "NexInferError",
     "PrefillInput",

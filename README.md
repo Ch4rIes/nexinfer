@@ -25,6 +25,7 @@ remote backends without rewriting sampling and stop handling.
 - explicit sequence and decode state
 - optional batched backend prefill/decode contract with scheduled-token metadata
 - Nano-VLLM-style model-runner batch preparation
+- Nano-VLLM-style model-runner orchestration over prepared sequence batches
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters

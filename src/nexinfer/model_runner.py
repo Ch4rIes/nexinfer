@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence as SequenceCollection
 from dataclasses import dataclass
+from typing import Any
 
 from nexinfer.errors import ConfigurationError
 from nexinfer.protocols import DecodeInput, DecodeState, PrefillInput
+from nexinfer.sampling import Sampler
 from nexinfer.sequence import Sequence as RunnerSequence
 
 
@@ -79,6 +81,63 @@ class ModelRunnerContext:
             block_tables=batch.block_tables,
             context_lengths=batch.context_lengths,
         )
+
+
+class ModelRunner:
+    """Nano-VLLM-style runner orchestration around a logits-producing model."""
+
+    def __init__(
+        self,
+        model: Any,
+        *,
+        block_size: int,
+        sampler: Sampler | None = None,
+    ) -> None:
+        _validate_block_size(block_size)
+        self.model = model
+        self.block_size = block_size
+        self.sampler = sampler or Sampler()
+        self.last_context: ModelRunnerContext | None = None
+        self.last_sample_batch: PreparedSampleBatch | None = None
+
+    def run(
+        self,
+        sequences: SequenceCollection[RunnerSequence],
+        is_prefill: bool,
+    ) -> list[int]:
+        """Prepare a sequence batch, run the model, and sample next tokens."""
+
+        if not sequences:
+            return []
+
+        if is_prefill:
+            prepared = prepare_prefill_sequences(sequences, block_size=self.block_size)
+            self.last_context = ModelRunnerContext.from_prefill(prepared)
+        else:
+            prepared = prepare_decode_sequences(sequences, block_size=self.block_size)
+            self.last_context = ModelRunnerContext.from_decode(prepared)
+
+        sample_batch = prepare_sample_sequences(sequences)
+        self.last_sample_batch = sample_batch
+        logits = self.run_model(prepared.input_ids, prepared.positions, is_prefill)
+        if len(logits) != len(sequences):
+            raise ConfigurationError("model must return one logits row per sequence")
+        return self.sampler(logits, sample_batch.temperatures)
+
+    def run_model(
+        self,
+        input_ids: SequenceCollection[int],
+        positions: SequenceCollection[int],
+        is_prefill: bool,
+    ) -> SequenceCollection[SequenceCollection[float]]:
+        """Call the wrapped model object to produce logits."""
+
+        run_model = getattr(self.model, "run_model", None)
+        if callable(run_model):
+            return run_model(input_ids, positions, is_prefill)
+        if callable(self.model):
+            return self.model(input_ids, positions, is_prefill)
+        raise ConfigurationError("model must be callable or expose run_model")
 
 
 def prepare_prefill_batch(

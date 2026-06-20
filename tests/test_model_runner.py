@@ -1,11 +1,15 @@
+import random
+
 import pytest
 
 from nexinfer import (
     ConfigurationError,
     DecodeInput,
     DecodeState,
+    ModelRunner,
     PrefillInput,
     SamplingParams,
+    Sampler,
     Sequence,
     prepare_decode_batch,
     prepare_decode_sequences,
@@ -13,6 +17,30 @@ from nexinfer import (
     prepare_prefill_sequences,
     prepare_sample_sequences,
 )
+
+
+class FixedRaceRng(random.Random):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def expovariate(self, lambd: float) -> float:
+        assert lambd == 1.0
+        return 1.0
+
+
+class FakeModel:
+    def __init__(self, logits: list[list[float]]) -> None:
+        self.logits = logits
+        self.calls: list[tuple[list[int], list[int], bool]] = []
+
+    def run_model(
+        self,
+        input_ids: list[int],
+        positions: list[int],
+        is_prefill: bool,
+    ) -> list[list[float]]:
+        self.calls.append((list(input_ids), list(positions), is_prefill))
+        return self.logits
 
 
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
@@ -203,3 +231,102 @@ def test_prepare_sample_sequences_returns_temperatures() -> None:
     prepared = prepare_sample_sequences([first, second])
 
     assert prepared.temperatures == [0.5, 1.25]
+
+
+def test_model_runner_run_prefill_prepares_context_and_samples_tokens() -> None:
+    sequence = Sequence([10, 11, 12], SamplingParams(temperature=0.5))
+    sequence.num_cached_tokens = 1
+    sequence.num_scheduled_tokens = 2
+    sequence.block_table.extend([3, 4])
+    model = FakeModel([[0.0, 10.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    token_ids = runner.run([sequence], is_prefill=True)
+
+    assert token_ids == [1]
+    assert model.calls == [([11, 12], [1, 2], True)]
+    assert runner.last_sample_batch is not None
+    assert runner.last_sample_batch.temperatures == [0.5]
+    assert runner.last_context is not None
+    assert runner.last_context.is_prefill is True
+    assert runner.last_context.input_ids == [11, 12]
+    assert runner.last_context.positions == [1, 2]
+    assert runner.last_context.slot_mapping == [7, 8]
+
+
+def test_model_runner_run_decode_prepares_context_and_samples_tokens() -> None:
+    first = Sequence([10, 11], SamplingParams(temperature=1.0))
+    first.append_token(12)
+    first.num_scheduled_tokens = 1
+    first.block_table.extend([3, 4])
+    second = Sequence([20], SamplingParams(temperature=2.0))
+    second.num_scheduled_tokens = 1
+    second.block_table.extend([5])
+    model = FakeModel([[10.0, 0.0], [0.0, 10.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    token_ids = runner.run([first, second], is_prefill=False)
+
+    assert token_ids == [0, 1]
+    assert model.calls == [([12, 20], [2, 0], False)]
+    assert runner.last_sample_batch is not None
+    assert runner.last_sample_batch.temperatures == [1.0, 2.0]
+    assert runner.last_context is not None
+    assert runner.last_context.is_prefill is False
+    assert runner.last_context.input_ids == [12, 20]
+    assert runner.last_context.positions == [2, 0]
+    assert runner.last_context.context_lengths == [3, 1]
+
+
+def test_model_runner_accepts_callable_model() -> None:
+    calls: list[tuple[list[int], list[int], bool]] = []
+
+    def model(
+        input_ids: list[int],
+        positions: list[int],
+        is_prefill: bool,
+    ) -> list[list[float]]:
+        calls.append((list(input_ids), list(positions), is_prefill))
+        return [[0.0, 10.0]]
+
+    sequence = Sequence([1], SamplingParams(temperature=1.0))
+    sequence.num_scheduled_tokens = 1
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    assert runner.run([sequence], is_prefill=True) == [1]
+    assert calls == [([1], [0], True)]
+
+
+def test_model_runner_validates_model_logits_row_count() -> None:
+    runner = ModelRunner(
+        FakeModel([[0.0, 1.0]]),
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+    first = Sequence([1], SamplingParams(temperature=1.0))
+    first.num_scheduled_tokens = 1
+    second = Sequence([2], SamplingParams(temperature=1.0))
+    second.num_scheduled_tokens = 1
+
+    with pytest.raises(ConfigurationError, match="one logits row"):
+        runner.run([first, second], is_prefill=True)
+
+
+def test_model_runner_empty_batch_returns_no_tokens() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    assert runner.run([], is_prefill=True) == []
+    assert runner.last_context is None
+    assert runner.last_sample_batch is None

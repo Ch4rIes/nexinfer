@@ -210,3 +210,36 @@ def test_complete_requests_uses_per_request_config() -> None:
     results = engine.complete_requests(list(queue.schedule(max_requests=1).requests))
 
     assert [result.text for result in results] == ["b"]
+
+
+def test_prompt_limit_rejects_oversized_prompt() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b"])
+    backend = BigramBackend(vocab_size=len(tokenizer))
+    engine = LLMEngine(backend, tokenizer)
+
+    with pytest.raises(ValueError, match="max_prompt_tokens"):
+        engine.generate("a b", GenerationConfig(max_prompt_tokens=1))
+
+
+def test_total_token_limit_caps_generation() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c"])
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {tokenizer.token_id("c"): 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+
+    result = engine.complete(
+        "a",
+        GenerationConfig(
+            max_new_tokens=5,
+            max_total_tokens=2,
+            sampling=SamplingConfig(temperature=0),
+        ),
+    )
+
+    assert result.text == "b"
+    assert result.finish_reason == "length"

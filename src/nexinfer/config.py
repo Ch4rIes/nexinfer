@@ -28,6 +28,8 @@ class GenerationConfig:
     """Controls text generation."""
 
     max_new_tokens: int = 32
+    max_prompt_tokens: int | None = None
+    max_total_tokens: int | None = None
     sampling: SamplingConfig = SamplingConfig()
     stop_token_ids: tuple[int, ...] = ()
     include_prompt: bool = False
@@ -36,3 +38,7 @@ class GenerationConfig:
     def __post_init__(self) -> None:
         if self.max_new_tokens < 0:
             raise ConfigurationError("max_new_tokens must be non-negative")
+        if self.max_prompt_tokens is not None and self.max_prompt_tokens < 0:
+            raise ConfigurationError("max_prompt_tokens must be non-negative when set")
+        if self.max_total_tokens is not None and self.max_total_tokens < 0:
+            raise ConfigurationError("max_total_tokens must be non-negative when set")

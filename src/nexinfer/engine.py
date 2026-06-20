@@ -4,7 +4,7 @@ import random
 from collections.abc import Iterator
 
 from nexinfer.config import GenerationConfig
-from nexinfer.errors import BackendError
+from nexinfer.errors import BackendError, ConfigurationError
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
@@ -42,6 +42,7 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
+        _validate_prompt_limits(prompt_token_ids, config)
         sequence = self._generate_sequence(
             prompt_token_ids,
             config,
@@ -93,6 +94,7 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
+        _validate_prompt_limits(prompt_token_ids, config)
         sequence = self._generate_sequence(
             prompt_token_ids,
             config,
@@ -117,6 +119,7 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
+        _validate_prompt_limits(prompt_token_ids, config)
         sequence = self._generate_sequence(
             prompt_token_ids,
             config,
@@ -129,7 +132,8 @@ class LLMEngine:
         config: GenerationConfig,
     ) -> SequenceState:
         sequence = SequenceState(prompt_token_ids=input_ids)
-        if config.max_new_tokens == 0:
+        max_new_tokens = _effective_max_new_tokens(input_ids, config)
+        if max_new_tokens == 0:
             sequence.finish("length")
             return sequence
 
@@ -139,7 +143,7 @@ class LLMEngine:
         rng = random.Random(config.sampling.seed)
         stop_token_ids = set(config.stop_token_ids)
 
-        for _ in range(config.max_new_tokens):
+        for _ in range(max_new_tokens):
             sampled = sample_next(output.logits, config.sampling, rng)
             token_id = sampled.token_id
             if token_id in stop_token_ids:
@@ -154,6 +158,28 @@ class LLMEngine:
 
         sequence.finish("length")
         return sequence
+
+
+def _validate_prompt_limits(input_ids: list[int], config: GenerationConfig) -> None:
+    if (
+        config.max_prompt_tokens is not None
+        and len(input_ids) > config.max_prompt_tokens
+    ):
+        raise ConfigurationError(
+            f"prompt has {len(input_ids)} tokens, exceeds max_prompt_tokens "
+            f"{config.max_prompt_tokens}"
+        )
+
+
+def _effective_max_new_tokens(
+    input_ids: list[int],
+    config: GenerationConfig,
+) -> int:
+    if config.max_total_tokens is None:
+        return config.max_new_tokens
+
+    remaining_context = max(config.max_total_tokens - len(input_ids), 0)
+    return min(config.max_new_tokens, remaining_context)
 
 
 def _validate_model_output(output: ModelOutput, vocab_size: int) -> None:

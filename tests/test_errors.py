@@ -44,3 +44,9 @@ def test_backend_error_is_value_error_compatible() -> None:
 def test_generation_config_raises_configuration_error() -> None:
     with pytest.raises(ConfigurationError):
         GenerationConfig(max_new_tokens=-1)
+
+    with pytest.raises(ConfigurationError):
+        GenerationConfig(max_prompt_tokens=-1)
+
+    with pytest.raises(ConfigurationError):
+        GenerationConfig(max_total_tokens=-1)

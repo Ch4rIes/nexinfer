@@ -13,6 +13,8 @@ from nexinfer import (
     KVCacheSlice,
     LLMConfig,
     ModelRunner,
+    ModelRunnerCommand,
+    ModelRunnerGroup,
     PrefillInput,
     SamplingParams,
     Sampler,
@@ -25,6 +27,7 @@ from nexinfer import (
     prepare_prefill_sequences,
     prepare_sample_sequences,
     reset_context,
+    reset_sequence_counter,
 )
 
 
@@ -103,6 +106,37 @@ class KVCacheModel(FakeModel):
 
     def modules(self) -> list[object]:
         return [object(), *self.kv_modules]
+
+
+class MutatingWorkerRunner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[int], bool]] = []
+        self.close_calls = 0
+
+    def call(self, method_name: str, *args: object) -> None:
+        if method_name == "run":
+            sequences, is_prefill = args
+            sequence = sequences[0]  # type: ignore[index]
+            self.calls.append((method_name, list(sequence.token_ids), is_prefill))
+            sequence.append_token(999)
+            return None
+        if method_name == "exit":
+            self.close_calls += 1
+            return None
+        raise AssertionError(f"unexpected method: {method_name}")
+
+
+class RecordingPrimaryRunner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[int], bool]] = []
+        self.close_calls = 0
+
+    def run(self, sequences: list[Sequence], is_prefill: bool) -> list[int]:
+        self.calls.append((list(sequences[0].token_ids), is_prefill))
+        return [7]
+
+    def exit(self) -> None:
+        self.close_calls += 1
 
 
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
@@ -649,6 +683,68 @@ def test_model_runner_validates_model_logits_row_count() -> None:
 
     with pytest.raises(ConfigurationError, match="one logits row"):
         runner.run([first, second], is_prefill=True)
+
+
+def test_model_runner_rank_worker_runs_without_sampling() -> None:
+    sequence = Sequence([1], SamplingParams(temperature=0.5))
+    sequence.num_scheduled_tokens = 1
+    model = FakeModel([[0.0, 10.0]])
+    runner = ModelRunner(
+        model,
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+        rank=1,
+        world_size=2,
+    )
+
+    assert runner.run([sequence], is_prefill=True) is None
+    assert model.calls == [([1], [0], True)]
+    assert runner.last_sample_batch is None
+
+
+def test_model_runner_validates_rank_metadata() -> None:
+    with pytest.raises(ConfigurationError, match="world_size"):
+        ModelRunner(FakeModel([]), block_size=2, world_size=0)
+
+    with pytest.raises(ConfigurationError, match="rank"):
+        ModelRunner(FakeModel([]), block_size=2, rank=2, world_size=2)
+
+
+def test_model_runner_group_broadcasts_pickled_commands_to_workers() -> None:
+    reset_sequence_counter()
+    sequence = Sequence([1, 2])
+    worker = MutatingWorkerRunner()
+    primary = RecordingPrimaryRunner()
+    group = ModelRunnerGroup(primary, [worker])
+
+    assert group.world_size == 2
+    assert group.call("run", [sequence], True) == [7]
+
+    assert isinstance(group.commands[0], ModelRunnerCommand)
+    assert group.commands[0].method_name == "run"
+    assert group.commands[0].payload_size > 0
+    assert worker.calls == [("run", [1, 2], True)]
+    assert primary.calls == [([1, 2], True)]
+    assert sequence.token_ids == [1, 2]
+
+
+def test_model_runner_group_broadcasts_exit_to_workers() -> None:
+    worker = MutatingWorkerRunner()
+    primary = RecordingPrimaryRunner()
+    group = ModelRunnerGroup(primary, [worker])
+
+    group.exit()
+
+    assert [command.method_name for command in group.commands] == ["exit"]
+    assert worker.close_calls == 1
+    assert primary.close_calls == 1
+
+
+def test_model_runner_group_rejects_unknown_primary_method() -> None:
+    group = ModelRunnerGroup(object())
+
+    with pytest.raises(ConfigurationError, match="unknown model runner method"):
+        group.call("missing")
 
 
 def test_model_runner_empty_batch_returns_no_tokens() -> None:

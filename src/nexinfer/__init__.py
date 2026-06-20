@@ -26,6 +26,8 @@ from nexinfer.metrics import RuntimeStats
 from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
 from nexinfer.model_runner import (
     CUDAGraphCapturePlan,
+    ModelRunnerCommand,
+    ModelRunnerGroup,
     ModelRunner,
     ModelRunnerContext,
     PreparedDecodeBatch,
@@ -103,7 +105,9 @@ __all__ = [
     "ModelOutput",
     "ModelConfig",
     "ModelRunner",
+    "ModelRunnerCommand",
     "ModelRunnerContext",
+    "ModelRunnerGroup",
     "NanoLLMEngine",
     "NanoLLMOutput",
     "NanoLLMStepOutput",

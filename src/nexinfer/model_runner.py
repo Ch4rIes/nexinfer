@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence as SequenceCollection
 from dataclasses import dataclass
+import pickle
 from typing import Any
 
 from nexinfer.context import reset_context, set_context
@@ -80,6 +81,14 @@ class CUDAGraphCapturePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelRunnerCommand:
+    """Serialized command metadata broadcast to model-runner workers."""
+
+    method_name: str
+    payload_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRunnerContext:
     """Prepared runner context for the latest prefill or decode batch."""
 
@@ -130,12 +139,17 @@ class ModelRunner:
         block_size: int,
         sampler: Sampler | None = None,
         config: Any | None = None,
+        rank: int = 0,
+        world_size: int = 1,
     ) -> None:
         _validate_block_size(block_size)
+        _validate_runner_rank(rank=rank, world_size=world_size)
         self.model = model
         self.block_size = block_size
         self.sampler = sampler or Sampler()
         self.config = config
+        self.rank = rank
+        self.world_size = world_size
         self.last_context: ModelRunnerContext | None = None
         self.last_sample_batch: PreparedSampleBatch | None = None
         self.kv_cache: Any | None = None
@@ -276,7 +290,7 @@ class ModelRunner:
         self,
         sequences: SequenceCollection[RunnerSequence],
         is_prefill: bool,
-    ) -> list[int]:
+    ) -> list[int] | None:
         """Prepare a sequence batch, run the model, and sample next tokens."""
 
         if not sequences:
@@ -287,13 +301,16 @@ class ModelRunner:
         else:
             input_ids, positions = self.prepare_decode(sequences)
 
-        sample_batch = self.prepare_sample(sequences)
+        sample_batch = self.prepare_sample(sequences) if self.rank == 0 else None
         try:
             logits = self.run_model(input_ids, positions, is_prefill)
         finally:
             reset_context()
+        if self.rank != 0:
+            return None
         if len(logits) != len(sequences):
             raise ConfigurationError("model must return one logits row per sequence")
+        assert sample_batch is not None
         return self.sampler(logits, sample_batch.temperatures)
 
     def prepare_prefill(
@@ -372,6 +389,43 @@ class ModelRunner:
             context_lens=batch.context_lengths,
             block_tables=batch.block_tables or None,
         )
+
+
+class ModelRunnerGroup:
+    """Rank-0 style command fanout for a primary runner and worker runners."""
+
+    def __init__(
+        self,
+        primary: Any,
+        workers: SequenceCollection[Any] | None = None,
+    ) -> None:
+        self.primary = primary
+        self.workers = list(workers or ())
+        self.commands: list[ModelRunnerCommand] = []
+
+    @property
+    def world_size(self) -> int:
+        return 1 + len(self.workers)
+
+    def call(self, method_name: str, *args: Any) -> Any:
+        """Broadcast a runner command to workers and return the primary result."""
+
+        payload = _serialize_runner_command(method_name, args) if self.workers else b""
+        self.commands.append(
+            ModelRunnerCommand(
+                method_name=method_name,
+                payload_size=len(payload),
+            )
+        )
+        for worker in self.workers:
+            worker_method_name, worker_args = _deserialize_runner_command(payload)
+            _call_runner_method(worker, worker_method_name, *worker_args)
+        return _call_runner_method(self.primary, method_name, *args)
+
+    def exit(self) -> None:
+        self.call("exit")
+
+    close = exit
 
 
 def prepare_prefill_batch(
@@ -570,6 +624,13 @@ def _validate_block_size(block_size: int) -> None:
         raise ConfigurationError("block_size must be positive")
 
 
+def _validate_runner_rank(*, rank: int, world_size: int) -> None:
+    if world_size <= 0:
+        raise ConfigurationError("world_size must be positive")
+    if not 0 <= rank < world_size:
+        raise ConfigurationError("rank must be in [0, world_size)")
+
+
 def _positive_config_int(config: Any, name: str) -> int:
     value = int(getattr(config, name))
     if value <= 0:
@@ -589,6 +650,38 @@ def _optional_positive_hidden_size(config: Any) -> int | None:
     if hf_config is None or getattr(hf_config, "hidden_size", None) is None:
         return None
     return _positive_attr_int(hf_config, "hidden_size")
+
+
+def _serialize_runner_command(
+    method_name: str,
+    args: tuple[Any, ...],
+) -> bytes:
+    try:
+        return pickle.dumps([method_name, *args])
+    except Exception as exc:  # pragma: no cover - exact pickle errors vary
+        raise ConfigurationError(
+            "model runner worker command arguments must be pickleable"
+        ) from exc
+
+
+def _deserialize_runner_command(payload: bytes) -> tuple[str, tuple[Any, ...]]:
+    try:
+        method_name, *args = pickle.loads(payload)
+    except Exception as exc:  # pragma: no cover - exact pickle errors vary
+        raise ConfigurationError("invalid model runner worker command payload") from exc
+    if not isinstance(method_name, str):
+        raise ConfigurationError("model runner worker command name must be a string")
+    return method_name, tuple(args)
+
+
+def _call_runner_method(target: Any, method_name: str, *args: Any) -> Any:
+    call = getattr(target, "call", None)
+    if callable(call):
+        return call(method_name, *args)
+    method = getattr(target, method_name, None)
+    if not callable(method):
+        raise ConfigurationError(f"unknown model runner method: {method_name}")
+    return method(*args)
 
 
 def _decode_token_count(sequence: RunnerSequence) -> int:

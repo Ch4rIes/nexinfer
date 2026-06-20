@@ -49,6 +49,8 @@ class ActiveScheduler:
         self._waiting: deque[WaitingEntry] = deque()
         self._running: deque[ActiveSequence] = deque()
         self._request_ids: set[str] = set()
+        self._allocated_ids: set[str] = set()
+        self._prefill_progress: dict[str, int] = {}
 
     @property
     def waiting_count(self) -> int:
@@ -87,17 +89,18 @@ class ActiveScheduler:
         self._running = deque(
             active for active in self._running if active.request_id != request_id
         )
-        if was_running:
+        if was_running or request_id in self._allocated_ids:
             self._deallocate(request_id)
         self._request_ids.remove(request_id)
+        self._prefill_progress.pop(request_id, None)
         return True
 
     def schedule(self) -> ScheduledActiveBatch:
         prefill = self._schedule_prefill()
-        if prefill:
+        if prefill is not None:
             return prefill
         decode = self._schedule_decode()
-        if decode:
+        if decode is not None:
             return decode
         return ScheduledActiveBatch(phase="idle")
 
@@ -132,31 +135,61 @@ class ActiveScheduler:
             and len(requests) + len(active_sequences) < self._max_num_seqs
         ):
             next_entry = self._waiting[0]
-            next_tokens = len(self._entry_token_ids(next_entry))
+            next_entry_id = self._entry_id(next_entry)
+            next_token_ids = self._entry_token_ids(next_entry)
+            next_tokens = len(next_token_ids)
             next_plan = self._allocation_plan(next_entry)
+            cached_tokens_for_entry = (
+                next_plan.num_cached_tokens
+                if next_entry_id not in self._allocated_ids
+                else 0
+            )
+            progress = max(
+                self._prefill_progress.get(next_entry_id, 0),
+                next_plan.num_cached_tokens,
+            )
+            remaining_tokens = max(next_tokens - progress, 0)
+            budget_remaining = (
+                remaining_tokens
+                if self._max_num_batched_tokens is None
+                else self._max_num_batched_tokens - num_tokens
+            )
+            if remaining_tokens > 0 and budget_remaining <= 0:
+                break
+
             would_exceed = (
                 self._max_num_batched_tokens is not None
-                and num_tokens + max(next_tokens - next_plan.num_cached_tokens, 0)
-                > self._max_num_batched_tokens
+                and remaining_tokens > budget_remaining
             )
-            if would_exceed and requests:
+            if would_exceed and (requests or active_sequences):
                 break
             if not next_plan.can_allocate:
                 if requests:
                     break
                 raise CacheError("not enough free KV-cache blocks")
 
-            entry = self._waiting.popleft()
+            entry = self._waiting[0]
             self._allocate_entry(entry, next_plan.num_cached_blocks)
-            if isinstance(entry, ActiveSequence):
-                active_sequences.append(entry)
+            scheduled_tokens = min(remaining_tokens, max(budget_remaining, 0))
+            progress += scheduled_tokens
+            self._prefill_progress[next_entry_id] = progress
+            self._hash_prefill_progress(entry, progress)
+            num_tokens += scheduled_tokens
+            cached_tokens += cached_tokens_for_entry
+
+            if progress >= next_tokens:
+                entry = self._waiting.popleft()
+                self._prefill_progress.pop(next_entry_id, None)
+                if isinstance(entry, ActiveSequence):
+                    active_sequences.append(entry)
+                else:
+                    requests.append(entry)
             else:
-                requests.append(entry)
-            num_tokens += max(next_tokens - next_plan.num_cached_tokens, 0)
-            cached_tokens += next_plan.num_cached_tokens
+                break
 
         if not requests and not active_sequences:
-            return None
+            if num_tokens == 0 and cached_tokens == 0:
+                return None
         return ScheduledActiveBatch(
             phase="prefill",
             requests=tuple(requests),
@@ -202,6 +235,7 @@ class ActiveScheduler:
                 finished.append(active)
                 self._deallocate(active.request_id)
                 self._request_ids.remove(active.request_id)
+                self._prefill_progress.pop(active.request_id, None)
             else:
                 self._running.append(active)
         return tuple(finished)
@@ -210,12 +244,19 @@ class ActiveScheduler:
         """Move a running sequence back to waiting and free its KV blocks."""
 
         self._deallocate(active.request_id)
+        self._prefill_progress.pop(active.request_id, None)
         active.output = None
         active.block_table = None
         self._waiting.appendleft(active)
 
     def _allocation_plan(self, entry: WaitingEntry) -> _SchedulerAllocationPlan:
         if self._block_manager is None:
+            return _SchedulerAllocationPlan(
+                can_allocate=True,
+                num_cached_blocks=0,
+                num_cached_tokens=0,
+            )
+        if self._entry_id(entry) in self._allocated_ids:
             return _SchedulerAllocationPlan(
                 can_allocate=True,
                 num_cached_blocks=0,
@@ -237,11 +278,14 @@ class ActiveScheduler:
     ) -> None:
         if self._block_manager is None:
             return
+        if self._entry_id(entry) in self._allocated_ids:
+            return
         self._block_manager.allocate(
             self._entry_id(entry),
             self._entry_token_ids(entry),
             num_cached_blocks=num_cached_blocks,
         )
+        self._allocated_ids.add(self._entry_id(entry))
 
     def _attach_block_table(self, active: ActiveSequence) -> None:
         if self._block_manager is None:
@@ -253,6 +297,14 @@ class ActiveScheduler:
         if self._block_manager is None:
             return
         self._block_manager.hash_blocks(active.request_id, active.sequence.token_ids)
+
+    def _hash_prefill_progress(self, entry: WaitingEntry, progress: int) -> None:
+        if self._block_manager is None:
+            return
+        self._block_manager.hash_blocks(
+            self._entry_id(entry),
+            self._entry_token_ids(entry)[:progress],
+        )
 
     def _can_append(self, active: ActiveSequence) -> bool:
         if self._block_manager is None:
@@ -269,6 +321,7 @@ class ActiveScheduler:
         if self._block_manager is None:
             return
         self._block_manager.deallocate(request_id)
+        self._allocated_ids.discard(request_id)
 
     def _entry_is_waiting(self, request_id: str) -> bool:
         return any(self._entry_id(entry) == request_id for entry in self._waiting)

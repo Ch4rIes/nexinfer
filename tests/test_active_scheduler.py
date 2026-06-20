@@ -249,3 +249,39 @@ def test_active_scheduler_preempts_current_sequence_when_no_victim_exists() -> N
     assert scheduler.waiting_count == 1
     assert scheduler.running_count == 0
     assert block_manager.used_blocks == 0
+
+
+def test_active_scheduler_chunks_prefill_larger_than_token_budget() -> None:
+    scheduler = ActiveScheduler(max_num_seqs=2, max_num_batched_tokens=2)
+    scheduler.add_request(_request("one", "a", 5))
+
+    first = scheduler.schedule()
+    second = scheduler.schedule()
+    third = scheduler.schedule()
+
+    assert first.phase == "prefill"
+    assert first.num_tokens == 2
+    assert first.requests == ()
+    assert second.num_tokens == 2
+    assert second.requests == ()
+    assert third.num_tokens == 1
+    assert [request.request_id for request in third.requests] == ["one"]
+    assert scheduler.waiting_count == 0
+
+
+def test_chunked_prefill_hashes_completed_prefix_blocks() -> None:
+    block_manager = PrefixKVCacheBlockManager(num_blocks=4, block_size=2)
+    scheduler = ActiveScheduler(
+        max_num_seqs=1,
+        max_num_batched_tokens=2,
+        block_manager=block_manager,
+    )
+    scheduler.add_request(_request("one", "a", 5))
+
+    scheduler.schedule()
+    first_hash = block_manager.blocks[0].hash
+    scheduler.schedule()
+    second_hash = block_manager.blocks[1].hash
+
+    assert first_hash != -1
+    assert second_hash != -1

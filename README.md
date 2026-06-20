@@ -123,7 +123,9 @@ print(runtime.stats.total_tokens)
 scheduled before decode work, and unfinished sequences stay in the running queue
 until a later decode phase completes them. When KV append capacity is exhausted,
 the active scheduler can preempt a running sequence, free its blocks, and move it
-back to waiting for a later prefill phase.
+back to waiting for a later prefill phase. Prompts larger than
+`max_batch_prompt_tokens` are admitted through chunked prefill phases; the current
+backend path runs model prefill when the final prompt chunk is admitted.
 
 ## Optional integrations
 
@@ -162,7 +164,6 @@ Near-term:
 Mid-term:
 
 - connect `DecodeState.cache` to real KV-cache tensors
-- add chunked prefill scheduling for prompts larger than the token budget
 - replace toy batch methods with real tensor-batched model runner calls
 - wire block tables into backend decode state
 

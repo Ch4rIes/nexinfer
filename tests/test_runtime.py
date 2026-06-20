@@ -294,3 +294,36 @@ def test_continuous_runtime_completes_requests_with_preemption() -> None:
     assert [item.request_id for item in completed] == ["one", "two"]
     assert [item.result.text for item in completed] == ["b", "y"]
     assert block_manager.used_blocks == 0
+
+
+def test_continuous_runtime_completes_chunked_prefill_request() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "d"])
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("c"): {tokenizer.token_id("d"): 5.0},
+        },
+    )
+    block_manager = PrefixKVCacheBlockManager(num_blocks=8, block_size=2)
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=1,
+        max_batch_prompt_tokens=1,
+        decode_strategy="continuous",
+        block_manager=block_manager,
+    )
+    runtime.submit(
+        "a b c",
+        GenerationConfig(
+            max_new_tokens=1,
+            sampling=SamplingConfig(temperature=0),
+        ),
+        request_id="one",
+    )
+
+    completed = runtime.run_until_idle()
+
+    assert [item.request_id for item in completed] == ["one"]
+    assert [item.result.text for item in completed] == ["d"]
+    assert block_manager.used_blocks == 0

@@ -26,6 +26,7 @@ from nexinfer.metrics import RuntimeStats
 from nexinfer.nano_engine import NanoLLMEngine, NanoLLMOutput, NanoLLMStepOutput
 from nexinfer.model_runner import (
     CUDAGraphCapturePlan,
+    CUDAGraphReplayPlan,
     ModelRunnerCommand,
     ModelRunnerGroup,
     ModelRunner,
@@ -86,6 +87,7 @@ __all__ = [
     "Context",
     "Config",
     "CUDAGraphCapturePlan",
+    "CUDAGraphReplayPlan",
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",

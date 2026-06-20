@@ -81,6 +81,19 @@ class CUDAGraphCapturePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class CUDAGraphReplayPlan:
+    """CPU-safe metadata for one Nano-VLLM-style CUDA graph replay."""
+
+    batch_size: int
+    graph_batch_size: int
+    input_ids: list[int]
+    positions: list[int]
+    slot_mapping: list[int]
+    context_lengths: list[int]
+    block_tables: list[list[int]]
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRunnerCommand:
     """Serialized command metadata broadcast to model-runner workers."""
 
@@ -141,6 +154,7 @@ class ModelRunner:
         config: Any | None = None,
         rank: int = 0,
         world_size: int = 1,
+        enforce_eager: bool | None = None,
     ) -> None:
         _validate_block_size(block_size)
         _validate_runner_rank(rank=rank, world_size=world_size)
@@ -148,10 +162,12 @@ class ModelRunner:
         self.block_size = block_size
         self.sampler = sampler or Sampler()
         self.config = config
+        self.enforce_eager = _resolve_enforce_eager(enforce_eager, config)
         self.rank = rank
         self.world_size = world_size
         self.last_context: ModelRunnerContext | None = None
         self.last_sample_batch: PreparedSampleBatch | None = None
+        self.last_graph_replay: CUDAGraphReplayPlan | None = None
         self.kv_cache: Any | None = None
         self.kv_cache_shape: tuple[int, ...] | None = None
         self.graph_bs: list[int] = []
@@ -360,6 +376,13 @@ class ModelRunner:
     ) -> SequenceCollection[SequenceCollection[float]]:
         """Call the wrapped model object to produce logits."""
 
+        self.last_graph_replay = None
+        if self._should_plan_cudagraph_replay(len(input_ids), is_prefill):
+            self.last_graph_replay = self.prepare_cudagraph_replay(
+                input_ids,
+                positions,
+            )
+
         run_model = getattr(self.model, "run_model", None)
         if callable(run_model):
             return run_model(input_ids, positions, is_prefill)
@@ -370,6 +393,33 @@ class ModelRunner:
         if callable(self.model):
             return self.model(input_ids, positions, is_prefill)
         raise ConfigurationError("model must be callable or expose run_model")
+
+    def prepare_cudagraph_replay(
+        self,
+        input_ids: SequenceCollection[int],
+        positions: SequenceCollection[int],
+    ) -> CUDAGraphReplayPlan:
+        """Prepare CPU-safe metadata for a captured decode graph replay."""
+
+        if self.graph_capture_plan is None:
+            raise ConfigurationError("CUDA graph capture plan is required")
+        batch_size = len(input_ids)
+        graph_batch_size = self._cudagraph_batch_size(batch_size)
+        context = self.last_context
+        if context is None or context.is_prefill:
+            raise ConfigurationError("decode context is required for CUDA graph replay")
+        if context.context_lengths is None:
+            raise ConfigurationError("decode context lengths are required")
+
+        return CUDAGraphReplayPlan(
+            batch_size=batch_size,
+            graph_batch_size=graph_batch_size,
+            input_ids=list(input_ids),
+            positions=list(positions),
+            slot_mapping=list(context.slot_mapping),
+            context_lengths=list(context.context_lengths),
+            block_tables=[list(row) for row in context.block_tables],
+        )
 
     def _set_prefill_context(self, batch: PreparedPrefillBatch) -> None:
         set_context(
@@ -389,6 +439,20 @@ class ModelRunner:
             context_lens=batch.context_lengths,
             block_tables=batch.block_tables or None,
         )
+
+    def _should_plan_cudagraph_replay(self, batch_size: int, is_prefill: bool) -> bool:
+        return (
+            not is_prefill
+            and not self.enforce_eager
+            and self.graph_capture_plan is not None
+            and 0 < batch_size <= self.graph_capture_plan.max_batch_size
+        )
+
+    def _cudagraph_batch_size(self, batch_size: int) -> int:
+        for graph_batch_size in self.graph_bs:
+            if graph_batch_size >= batch_size:
+                return graph_batch_size
+        raise ConfigurationError("batch size exceeds captured CUDA graph plan")
 
 
 class ModelRunnerGroup:
@@ -629,6 +693,14 @@ def _validate_runner_rank(*, rank: int, world_size: int) -> None:
         raise ConfigurationError("world_size must be positive")
     if not 0 <= rank < world_size:
         raise ConfigurationError("rank must be in [0, world_size)")
+
+
+def _resolve_enforce_eager(enforce_eager: bool | None, config: Any | None) -> bool:
+    if enforce_eager is not None:
+        return bool(enforce_eager)
+    if config is None:
+        return False
+    return bool(getattr(config, "enforce_eager", False))
 
 
 def _positive_config_int(config: Any, name: str) -> int:

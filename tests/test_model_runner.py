@@ -7,6 +7,7 @@ from nexinfer import (
     ConfigurationError,
     Context,
     CUDAGraphCapturePlan,
+    CUDAGraphReplayPlan,
     DecodeInput,
     DecodeState,
     KVCacheLayout,
@@ -651,6 +652,75 @@ def test_model_runner_capture_cudagraph_requires_config() -> None:
 
     with pytest.raises(ConfigurationError, match="config"):
         runner.capture_cudagraph()
+
+
+def test_model_runner_records_cudagraph_replay_plan_for_decode() -> None:
+    first = Sequence([10, 11], SamplingParams(temperature=1.0))
+    first.append_token(12)
+    first.num_scheduled_tokens = 1
+    first.block_table.extend([3, 4])
+    second = Sequence([20], SamplingParams(temperature=1.0))
+    second.num_scheduled_tokens = 1
+    second.block_table.extend([5])
+    runner = ModelRunner(
+        FakeModel([[0.0, 10.0], [0.0, 10.0]]),
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+        config=SimpleNamespace(
+            max_num_seqs=40,
+            max_model_len=33,
+            enforce_eager=False,
+        ),
+    )
+    runner.capture_cudagraph()
+
+    assert runner.run([first, second], is_prefill=False) == [1, 1]
+
+    replay = runner.last_graph_replay
+    assert isinstance(replay, CUDAGraphReplayPlan)
+    assert replay.batch_size == 2
+    assert replay.graph_batch_size == 2
+    assert replay.input_ids == [12, 20]
+    assert replay.positions == [2, 0]
+    assert replay.slot_mapping == [8, 10]
+    assert replay.context_lengths == [3, 1]
+    assert replay.block_tables == [[3, 4], [5, -1]]
+
+
+def test_model_runner_skips_cudagraph_replay_for_prefill_and_eager_mode() -> None:
+    config = SimpleNamespace(
+        max_num_seqs=8,
+        max_model_len=16,
+        enforce_eager=True,
+    )
+    runner = ModelRunner(
+        FakeModel([[0.0, 10.0]]),
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+        config=config,
+    )
+    runner.capture_cudagraph()
+    sequence = Sequence([1], SamplingParams(temperature=1.0))
+    sequence.num_scheduled_tokens = 1
+
+    assert runner.run([sequence], is_prefill=True) == [1]
+    assert runner.last_graph_replay is None
+
+    sequence.block_table.extend([0])
+    assert runner.run([sequence], is_prefill=False) == [1]
+    assert runner.last_graph_replay is None
+
+
+def test_model_runner_rejects_cudagraph_replay_without_decode_context() -> None:
+    runner = ModelRunner(
+        FakeModel([]),
+        block_size=2,
+        config=SimpleNamespace(max_num_seqs=8, max_model_len=16),
+    )
+    runner.capture_cudagraph()
+
+    with pytest.raises(ConfigurationError, match="decode context"):
+        runner.prepare_cudagraph_replay([1], [0])
 
 
 def test_model_runner_call_rejects_unknown_method() -> None:

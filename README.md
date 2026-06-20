@@ -11,6 +11,21 @@ Backends only need to implement a simple protocol:
 That shape makes it straightforward to add PyTorch, safetensors, quantized, or
 remote backends without rewriting sampling and stop handling.
 
+## What exists now
+
+- backend-agnostic generation engine
+- greedy, temperature, top-k, and top-p sampling
+- structured results with token usage and logprobs
+- streaming chunks
+- simple batch APIs
+- explicit sequence and decode state
+- FIFO request scheduling
+- queued runtime execution
+- runtime execution counters
+- early KV-cache block-table primitives
+- optional Hugging Face tokenizer adapter
+- optional PyTorch causal-LM backend scaffold
+
 ## Quick start
 
 ```python
@@ -80,11 +95,64 @@ For queued execution, wrap an engine in `InferenceRuntime`:
 ```python
 from nexinfer import InferenceRuntime
 
-runtime = InferenceRuntime(engine, max_batch_size=8)
+runtime = InferenceRuntime(
+    engine,
+    max_batch_size=8,
+    max_batch_prompt_tokens=2048,
+)
 runtime.submit("hello", request_id="request-1")
 completed = runtime.run_once()
 all_completed = runtime.run_until_idle()
+print(runtime.stats.total_tokens)
 ```
+
+## Optional integrations
+
+Install Hugging Face tokenizer support:
+
+```bash
+python -m pip install -e ".[transformers]"
+```
+
+Install the optional PyTorch backend dependencies:
+
+```bash
+python -m pip install -e ".[torch]"
+```
+
+Then load compatible components:
+
+```python
+from nexinfer import HuggingFaceTokenizer, ModelConfig
+from nexinfer.backends import TorchCausalLMBackend
+
+config = ModelConfig("gpt2", device="auto", dtype="auto")
+tokenizer = HuggingFaceTokenizer.from_pretrained(config.model_name_or_path)
+backend = TorchCausalLMBackend.from_pretrained(config)
+```
+
+## Roadmap
+
+Near-term:
+
+- exercise the PyTorch backend against a tiny local model
+- expose OpenAI-style completion response fields
+- add true batched prefill/decode instead of sequential batch execution
+- promote runtime stats into latency-aware metrics
+
+Mid-term:
+
+- connect `DecodeState.cache` to real KV-cache tensors
+- evolve request scheduling toward continuous batching
+- wire the block allocator into per-sequence KV-cache ownership
+- add prefix-cache primitives
+
+Later:
+
+- add HTTP serving and streaming endpoints
+- support structured generation constraints
+- add quantized loading paths
+- support FlashAttention/SDPA backend choices
 
 ## Development
 

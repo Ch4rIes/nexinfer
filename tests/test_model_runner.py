@@ -18,6 +18,7 @@ from nexinfer import (
     prepare_prefill_batch,
     prepare_prefill_sequences,
     prepare_sample_sequences,
+    reset_context,
 )
 
 
@@ -58,6 +59,15 @@ class ContextCapturingModel(FakeModel):
     ) -> list[list[float]]:
         self.contexts.append(get_context())
         return super().run_model(input_ids, positions, is_prefill)
+
+
+class ClosingModel(FakeModel):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def test_prepare_prefill_batch_flattens_scheduled_prompt_tokens() -> None:
@@ -250,6 +260,25 @@ def test_prepare_sample_sequences_returns_temperatures() -> None:
     assert prepared.temperatures == [0.5, 1.25]
 
 
+def test_model_runner_prepare_methods_set_context_and_sampling_metadata() -> None:
+    sequence = Sequence([10, 11, 12], SamplingParams(temperature=0.5))
+    sequence.num_cached_tokens = 1
+    sequence.num_scheduled_tokens = 2
+    sequence.block_table.extend([3, 4])
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    input_ids, positions = runner.prepare_prefill([sequence])
+    sample_batch = runner.prepare_sample([sequence])
+
+    assert (input_ids, positions) == ([11, 12], [1, 2])
+    assert runner.last_context is not None
+    assert runner.last_context.is_prefill is True
+    assert get_context().is_prefill is True
+    assert sample_batch.temperatures == [0.5]
+    assert runner.last_sample_batch == sample_batch
+    reset_context()
+
+
 def test_model_runner_run_prefill_prepares_context_and_samples_tokens() -> None:
     sequence = Sequence([10, 11, 12], SamplingParams(temperature=0.5))
     sequence.num_cached_tokens = 1
@@ -373,6 +402,35 @@ def test_model_runner_accepts_callable_model() -> None:
 
     assert runner.run([sequence], is_prefill=True) == [1]
     assert calls == [([1], [0], True)]
+
+
+def test_model_runner_call_dispatches_methods_by_name() -> None:
+    sequence = Sequence([1], SamplingParams(temperature=1.0))
+    sequence.num_scheduled_tokens = 1
+    runner = ModelRunner(
+        FakeModel([[0.0, 10.0]]),
+        block_size=2,
+        sampler=Sampler(FixedRaceRng()),
+    )
+
+    assert runner.call("run", [sequence], True) == [1]
+
+
+def test_model_runner_call_rejects_unknown_method() -> None:
+    runner = ModelRunner(FakeModel([]), block_size=2)
+
+    with pytest.raises(ConfigurationError, match="unknown model runner method"):
+        runner.call("missing")
+
+
+def test_model_runner_exit_closes_wrapped_model() -> None:
+    model = ClosingModel()
+    runner = ModelRunner(model, block_size=2)
+
+    runner.call("exit")
+    runner.close()
+
+    assert model.close_calls == 2
 
 
 def test_model_runner_validates_model_logits_row_count() -> None:

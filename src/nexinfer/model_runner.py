@@ -101,6 +101,25 @@ class ModelRunner:
         self.last_context: ModelRunnerContext | None = None
         self.last_sample_batch: PreparedSampleBatch | None = None
 
+    def call(self, method_name: str, *args: Any) -> Any:
+        """Call a runner method by name, matching Nano-VLLM's control path."""
+
+        method = getattr(self, method_name, None)
+        if not callable(method):
+            raise ConfigurationError(f"unknown model runner method: {method_name}")
+        return method(*args)
+
+    def exit(self) -> None:
+        """Release resources owned by the wrapped model when it supports cleanup."""
+
+        for method_name in ("exit", "close"):
+            method = getattr(self.model, method_name, None)
+            if callable(method):
+                method()
+                return
+
+    close = exit
+
     def run(
         self,
         sequences: SequenceCollection[RunnerSequence],
@@ -112,23 +131,49 @@ class ModelRunner:
             return []
 
         if is_prefill:
-            prepared = prepare_prefill_sequences(sequences, block_size=self.block_size)
-            self.last_context = ModelRunnerContext.from_prefill(prepared)
-            self._set_prefill_context(prepared)
+            input_ids, positions = self.prepare_prefill(sequences)
         else:
-            prepared = prepare_decode_sequences(sequences, block_size=self.block_size)
-            self.last_context = ModelRunnerContext.from_decode(prepared)
-            self._set_decode_context(prepared)
+            input_ids, positions = self.prepare_decode(sequences)
 
-        sample_batch = prepare_sample_sequences(sequences)
-        self.last_sample_batch = sample_batch
+        sample_batch = self.prepare_sample(sequences)
         try:
-            logits = self.run_model(prepared.input_ids, prepared.positions, is_prefill)
+            logits = self.run_model(input_ids, positions, is_prefill)
         finally:
             reset_context()
         if len(logits) != len(sequences):
             raise ConfigurationError("model must return one logits row per sequence")
         return self.sampler(logits, sample_batch.temperatures)
+
+    def prepare_prefill(
+        self,
+        sequences: SequenceCollection[RunnerSequence],
+    ) -> tuple[list[int], list[int]]:
+        """Prepare prefill inputs and set the active attention context."""
+
+        prepared = prepare_prefill_sequences(sequences, block_size=self.block_size)
+        self.last_context = ModelRunnerContext.from_prefill(prepared)
+        self._set_prefill_context(prepared)
+        return prepared.input_ids, prepared.positions
+
+    def prepare_decode(
+        self,
+        sequences: SequenceCollection[RunnerSequence],
+    ) -> tuple[list[int], list[int]]:
+        """Prepare decode inputs and set the active attention context."""
+
+        prepared = prepare_decode_sequences(sequences, block_size=self.block_size)
+        self.last_context = ModelRunnerContext.from_decode(prepared)
+        self._set_decode_context(prepared)
+        return prepared.input_ids, prepared.positions
+
+    def prepare_sample(
+        self,
+        sequences: SequenceCollection[RunnerSequence],
+    ) -> PreparedSampleBatch:
+        """Prepare per-sequence sampling metadata."""
+
+        self.last_sample_batch = prepare_sample_sequences(sequences)
+        return self.last_sample_batch
 
     def run_model(
         self,

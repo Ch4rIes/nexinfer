@@ -124,3 +124,37 @@ def test_runtime_honors_prompt_token_batch_budget() -> None:
 
     assert [item.request_id for item in completed] == ["one"]
     assert runtime.pending_requests == 1
+
+
+def test_runtime_can_use_interleaved_decode_strategy() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "x", "y", "z", "<eos>"])
+    eos_id = tokenizer.token_id("<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {tokenizer.token_id("c"): 5.0},
+            tokenizer.token_id("c"): {eos_id: 5.0},
+            tokenizer.token_id("x"): {tokenizer.token_id("y"): 5.0},
+            tokenizer.token_id("y"): {tokenizer.token_id("z"): 5.0},
+            tokenizer.token_id("z"): {eos_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+    runtime = InferenceRuntime(
+        engine,
+        max_batch_size=2,
+        decode_strategy="interleaved",
+    )
+    config = GenerationConfig(
+        max_new_tokens=8,
+        sampling=SamplingConfig(temperature=0),
+        stop_token_ids=(eos_id,),
+    )
+    runtime.submit("a", config, request_id="one")
+    runtime.submit("x", config, request_id="two")
+
+    completed = runtime.run_once()
+
+    assert [item.request_id for item in completed] == ["one", "two"]
+    assert [item.result.text for item in completed] == ["b c", "y z"]

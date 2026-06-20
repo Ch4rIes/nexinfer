@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from nexinfer.config import GenerationConfig
 from nexinfer.engine import LLMEngine
@@ -9,6 +10,8 @@ from nexinfer.errors import ConfigurationError
 from nexinfer.metrics import RuntimeStats
 from nexinfer.result import GenerationResult
 from nexinfer.scheduler import GenerationRequest, RequestQueue
+
+DecodeStrategy = Literal["sequential", "interleaved"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +31,7 @@ class InferenceRuntime:
         *,
         max_batch_size: int = 8,
         max_batch_prompt_tokens: int | None = None,
+        decode_strategy: DecodeStrategy = "sequential",
         queue: RequestQueue | None = None,
     ) -> None:
         if max_batch_size <= 0:
@@ -36,10 +40,13 @@ class InferenceRuntime:
             raise ConfigurationError(
                 "max_batch_prompt_tokens must be positive when set"
             )
+        if decode_strategy not in {"sequential", "interleaved"}:
+            raise ConfigurationError("decode_strategy must be sequential or interleaved")
 
         self._engine = engine
         self._max_batch_size = max_batch_size
         self._max_batch_prompt_tokens = max_batch_prompt_tokens
+        self._decode_strategy = decode_strategy
         self._queue = queue or RequestQueue()
         self._stats = RuntimeStats()
 
@@ -76,7 +83,11 @@ class InferenceRuntime:
             max_requests=self._max_batch_size,
             max_prompt_tokens=self._max_batch_prompt_tokens,
         )
-        results = self._engine.complete_requests(list(batch.requests))
+        requests = list(batch.requests)
+        if self._decode_strategy == "interleaved":
+            results = self._engine.complete_requests_interleaved(requests)
+        else:
+            results = self._engine.complete_requests(requests)
         result_tuple = tuple(results)
         if result_tuple:
             self._stats = self._stats.record_batch(result_tuple)

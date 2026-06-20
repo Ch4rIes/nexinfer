@@ -99,6 +99,7 @@ runtime = InferenceRuntime(
     engine,
     max_batch_size=8,
     max_batch_prompt_tokens=2048,
+    decode_strategy="interleaved",
 )
 runtime.submit("hello", request_id="request-1")
 completed = runtime.run_once()

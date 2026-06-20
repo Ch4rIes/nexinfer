@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from nexinfer.config import GenerationConfig
 from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
-from nexinfer.sampling import sample_token
+from nexinfer.sampling import sample_next
 
 
 class LLMEngine:
@@ -39,7 +39,11 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        generated_token_ids, finish_reason = self._generate_completion_token_ids(
+        (
+            generated_token_ids,
+            generated_token_logprobs,
+            finish_reason,
+        ) = self._generate_completion_token_ids(
             prompt_token_ids,
             config,
         )
@@ -54,6 +58,7 @@ class LLMEngine:
             token_ids=token_ids,
             prompt_token_ids=prompt_token_ids,
             generated_token_ids=generated_token_ids,
+            generated_token_logprobs=generated_token_logprobs,
             finish_reason=finish_reason,
             usage=TokenUsage(
                 prompt_tokens=len(prompt_token_ids),
@@ -85,7 +90,11 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        generated_token_ids, finish_reason = self._generate_completion_token_ids(
+        (
+            generated_token_ids,
+            generated_token_logprobs,
+            finish_reason,
+        ) = self._generate_completion_token_ids(
             prompt_token_ids,
             config,
         )
@@ -96,6 +105,7 @@ class LLMEngine:
                 text=self._tokenizer.decode([token_id]),
                 token_id=token_id,
                 index=index,
+                logprob=generated_token_logprobs[index],
                 finish_reason=finish_reason if is_last else None,
             )
 
@@ -108,7 +118,7 @@ class LLMEngine:
 
         config = config or GenerationConfig()
         prompt_token_ids = self._tokenizer.encode(prompt)
-        generated_token_ids, _ = self._generate_completion_token_ids(
+        generated_token_ids, _, _ = self._generate_completion_token_ids(
             prompt_token_ids,
             config,
         )
@@ -120,29 +130,33 @@ class LLMEngine:
         self,
         input_ids: list[int],
         config: GenerationConfig,
-    ) -> tuple[list[int], str]:
+    ) -> tuple[list[int], list[float], str]:
         if config.max_new_tokens == 0:
-            return [], "length"
+            return [], [], "length"
 
         output = self._backend.begin(input_ids)
         _validate_vocab_size(output.logits, self._backend.vocab_size)
 
         rng = random.Random(config.sampling.seed)
         generated: list[int] = []
+        generated_logprobs: list[float] = []
         stop_token_ids = set(config.stop_token_ids)
 
         for _ in range(config.max_new_tokens):
-            token_id = sample_token(output.logits, config.sampling, rng)
+            sampled = sample_next(output.logits, config.sampling, rng)
+            token_id = sampled.token_id
             if token_id in stop_token_ids:
                 if config.include_stop_token:
                     generated.append(token_id)
-                return generated, "stop"
+                    generated_logprobs.append(sampled.logprob)
+                return generated, generated_logprobs, "stop"
 
             generated.append(token_id)
+            generated_logprobs.append(sampled.logprob)
             output = self._backend.step(token_id, output.state)
             _validate_vocab_size(output.logits, self._backend.vocab_size)
 
-        return generated, "length"
+        return generated, generated_logprobs, "length"
 
 
 def _validate_vocab_size(logits: object, vocab_size: int) -> None:

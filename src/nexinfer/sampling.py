@@ -3,8 +3,18 @@ from __future__ import annotations
 import math
 import random
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from nexinfer.config import SamplingConfig
+
+
+@dataclass(frozen=True, slots=True)
+class SampledToken:
+    """A token selected from a sampling distribution."""
+
+    token_id: int
+    probability: float
+    logprob: float
 
 
 def sample_token(
@@ -14,6 +24,16 @@ def sample_token(
 ) -> int:
     """Select a token id from logits using greedy, top-k, and nucleus sampling."""
 
+    return sample_next(logits, config, rng).token_id
+
+
+def sample_next(
+    logits: Sequence[float],
+    config: SamplingConfig | None = None,
+    rng: random.Random | None = None,
+) -> SampledToken:
+    """Select the next token and return its sampling metadata."""
+
     if not logits:
         raise ValueError("logits must not be empty")
 
@@ -22,7 +42,8 @@ def sample_token(
     _validate_logits(logits)
 
     if config.temperature == 0:
-        return max(range(len(logits)), key=logits.__getitem__)
+        token_id = max(range(len(logits)), key=logits.__getitem__)
+        return SampledToken(token_id=token_id, probability=1.0, logprob=0.0)
 
     scaled = [value / config.temperature for value in logits]
     probabilities = _softmax(scaled)
@@ -46,16 +67,28 @@ def sample_token(
 
     total = sum(probability for _, probability in candidates)
     if total <= 0:
-        return max(range(len(logits)), key=logits.__getitem__)
+        token_id = max(range(len(logits)), key=logits.__getitem__)
+        return SampledToken(token_id=token_id, probability=1.0, logprob=0.0)
 
     threshold = rng.random() * total
     cumulative = 0.0
     for token_id, probability in candidates:
         cumulative += probability
         if cumulative >= threshold:
-            return token_id
+            normalized_probability = probability / total
+            return SampledToken(
+                token_id=token_id,
+                probability=normalized_probability,
+                logprob=math.log(normalized_probability),
+            )
 
-    return candidates[-1][0]
+    token_id, probability = candidates[-1]
+    normalized_probability = probability / total
+    return SampledToken(
+        token_id=token_id,
+        probability=normalized_probability,
+        logprob=math.log(normalized_probability),
+    )
 
 
 def _softmax(values: Sequence[float]) -> list[float]:

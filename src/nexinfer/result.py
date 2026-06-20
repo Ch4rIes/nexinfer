@@ -26,6 +26,7 @@ class GenerationResult:
     token_ids: list[int]
     prompt_token_ids: list[int]
     generated_token_ids: list[int]
+    generated_token_logprobs: list[float]
     finish_reason: FinishReason
     usage: TokenUsage
 
@@ -37,4 +38,5 @@ class StreamChunk:
     text: str
     token_id: int
     index: int
+    logprob: float
     finish_reason: FinishReason | None = None

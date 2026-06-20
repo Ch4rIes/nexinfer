@@ -41,6 +41,7 @@ Use `complete` when you need structured metadata:
 result = engine.complete("hello")
 print(result.text)
 print(result.finish_reason)
+print(result.generated_token_logprobs)
 print(result.usage.total_tokens)
 ```
 

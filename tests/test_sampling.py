@@ -3,7 +3,7 @@ import random
 import pytest
 
 from nexinfer import SamplingConfig
-from nexinfer.sampling import sample_token
+from nexinfer.sampling import sample_next, sample_token
 
 
 def test_temperature_zero_is_greedy() -> None:
@@ -39,3 +39,14 @@ def test_top_p_keeps_highest_probability_prefix() -> None:
 def test_rejects_invalid_logits() -> None:
     with pytest.raises(ValueError, match="finite"):
         sample_token([1.0, float("nan")])
+
+
+def test_sample_next_returns_logprob_metadata() -> None:
+    sampled = sample_next(
+        [0.0, 0.0],
+        SamplingConfig(seed=1),
+    )
+
+    assert sampled.token_id in {0, 1}
+    assert sampled.probability == pytest.approx(0.5)
+    assert sampled.logprob == pytest.approx(-0.6931471805599453)

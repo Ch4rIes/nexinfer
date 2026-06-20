@@ -104,6 +104,7 @@ def test_complete_returns_structured_result() -> None:
     assert result.finish_reason == "stop"
     assert result.prompt_token_ids == [tokenizer.token_id("hello")]
     assert result.generated_token_ids == [tokenizer.token_id("world")]
+    assert result.generated_token_logprobs == [0.0]
     assert result.usage.prompt_tokens == 1
     assert result.usage.completion_tokens == 1
     assert result.usage.total_tokens == 2
@@ -136,6 +137,7 @@ def test_stream_chunks_include_finish_reason_on_last_token() -> None:
             text="b",
             token_id=tokenizer.token_id("b"),
             index=0,
+            logprob=0.0,
             finish_reason="stop",
         )
     ]

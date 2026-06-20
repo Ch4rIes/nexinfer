@@ -75,6 +75,16 @@ queue.submit("hello")
 batch = queue.schedule(max_requests=8)
 ```
 
+For queued execution, wrap an engine in `InferenceRuntime`:
+
+```python
+from nexinfer import InferenceRuntime
+
+runtime = InferenceRuntime(engine, max_batch_size=8)
+runtime.submit("hello", request_id="request-1")
+completed = runtime.run_once()
+```
+
 ## Development
 
 ```bash

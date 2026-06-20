@@ -19,6 +19,7 @@ from nexinfer.errors import (
 from nexinfer.model import ModelConfig
 from nexinfer.metrics import RuntimeStats
 from nexinfer.model_runner import (
+    ModelRunnerContext,
     PreparedDecodeBatch,
     PreparedPrefillBatch,
     prepare_decode_batch,
@@ -72,6 +73,7 @@ __all__ = [
     "LLMEngine",
     "ModelOutput",
     "ModelConfig",
+    "ModelRunnerContext",
     "NexInferError",
     "PrefillInput",
     "ManagedKVCacheAllocation",

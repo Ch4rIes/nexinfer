@@ -32,6 +32,47 @@ class PreparedDecodeBatch:
     block_tables: list[list[int]]
 
 
+@dataclass(frozen=True, slots=True)
+class ModelRunnerContext:
+    """Prepared runner context for the latest prefill or decode batch."""
+
+    is_prefill: bool
+    input_ids: list[int]
+    positions: list[int]
+    slot_mapping: list[int]
+    block_tables: list[list[int]]
+    cu_seqlens_q: list[int] | None = None
+    cu_seqlens_k: list[int] | None = None
+    max_seqlen_q: int | None = None
+    max_seqlen_k: int | None = None
+    context_lengths: list[int] | None = None
+
+    @classmethod
+    def from_prefill(cls, batch: PreparedPrefillBatch) -> "ModelRunnerContext":
+        return cls(
+            is_prefill=True,
+            input_ids=batch.input_ids,
+            positions=batch.positions,
+            slot_mapping=batch.slot_mapping,
+            block_tables=batch.block_tables,
+            cu_seqlens_q=batch.cu_seqlens_q,
+            cu_seqlens_k=batch.cu_seqlens_k,
+            max_seqlen_q=batch.max_seqlen_q,
+            max_seqlen_k=batch.max_seqlen_k,
+        )
+
+    @classmethod
+    def from_decode(cls, batch: PreparedDecodeBatch) -> "ModelRunnerContext":
+        return cls(
+            is_prefill=False,
+            input_ids=batch.input_ids,
+            positions=batch.positions,
+            slot_mapping=batch.slot_mapping,
+            block_tables=batch.block_tables,
+            context_lengths=batch.context_lengths,
+        )
+
+
 def prepare_prefill_batch(
     inputs: Sequence[PrefillInput],
     *,
@@ -169,4 +210,3 @@ def _padded_block_tables(
 def _validate_block_size(block_size: int) -> None:
     if block_size <= 0:
         raise ConfigurationError("block_size must be positive")
-

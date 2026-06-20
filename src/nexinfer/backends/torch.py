@@ -4,18 +4,34 @@ from collections.abc import Sequence
 from typing import Any
 
 from nexinfer.model import DType, Device, ModelConfig
-from nexinfer.protocols import DecodeState, ModelOutput
+from nexinfer.model_runner import (
+    ModelRunnerContext,
+    prepare_decode_batch,
+    prepare_prefill_batch,
+)
+from nexinfer.protocols import DecodeInput, DecodeState, ModelOutput, PrefillInput
 
 
 class TorchCausalLMBackend:
     """Optional PyTorch backend for Hugging Face-style causal language models."""
 
-    def __init__(self, model: Any, *, vocab_size: int, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        vocab_size: int,
+        device: str = "cpu",
+        block_size: int = 16,
+    ) -> None:
         if vocab_size <= 0:
             raise ValueError("vocab_size must be positive")
+        if block_size <= 0:
+            raise ValueError("block_size must be positive")
         self._model = model
         self._vocab_size = vocab_size
         self._device = device
+        self._block_size = block_size
+        self._last_context: ModelRunnerContext | None = None
 
     @classmethod
     def from_pretrained(cls, config: ModelConfig, **kwargs: Any) -> "TorchCausalLMBackend":
@@ -48,6 +64,14 @@ class TorchCausalLMBackend:
     def device(self) -> str:
         return self._device
 
+    @property
+    def block_size(self) -> int:
+        return self._block_size
+
+    @property
+    def last_context(self) -> ModelRunnerContext | None:
+        return self._last_context
+
     def begin(self, input_ids: Sequence[int]) -> ModelOutput:
         return self._forward(input_ids, position=len(input_ids), past_key_values=None)
 
@@ -57,6 +81,23 @@ class TorchCausalLMBackend:
             position=state.position + 1,
             past_key_values=state.backend_state,
         )
+
+    def begin_batch(self, inputs: Sequence[PrefillInput]) -> list[ModelOutput]:
+        prepared = prepare_prefill_batch(inputs, block_size=self._block_size)
+        self._last_context = ModelRunnerContext.from_prefill(prepared)
+        return [
+            self._forward(
+                item.token_ids,
+                position=len(item.token_ids),
+                past_key_values=None,
+            )
+            for item in inputs
+        ]
+
+    def step_batch(self, inputs: Sequence[DecodeInput]) -> list[ModelOutput]:
+        prepared = prepare_decode_batch(inputs, block_size=self._block_size)
+        self._last_context = ModelRunnerContext.from_decode(prepared)
+        return [self.step(item.token_id, item.state) for item in inputs]
 
     def _forward(
         self,

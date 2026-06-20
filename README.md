@@ -163,6 +163,10 @@ tokenizer = HuggingFaceTokenizer.from_pretrained(config.model_name_or_path)
 backend = TorchCausalLMBackend.from_pretrained(config)
 ```
 
+The optional Torch backend records prepared runner contexts for batched prefill
+and decode calls, so future paged-attention runners can consume the same
+scheduling metadata while the current fallback stays eager and simple.
+
 ## Roadmap
 
 Near-term:

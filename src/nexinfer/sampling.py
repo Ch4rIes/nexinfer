@@ -17,6 +17,40 @@ class SampledToken:
     logprob: float
 
 
+class Sampler:
+    """Nano-VLLM-style batched temperature sampler."""
+
+    def __init__(self, rng: random.Random | None = None) -> None:
+        self._rng = rng or random.Random()
+
+    def __call__(
+        self,
+        logits: Sequence[Sequence[float]],
+        temperatures: Sequence[float],
+    ) -> list[int]:
+        if len(logits) != len(temperatures):
+            raise ValueError("logits and temperatures must have the same length")
+        return [
+            self.sample_row(row, temperature)
+            for row, temperature in zip(logits, temperatures, strict=True)
+        ]
+
+    def sample_row(self, logits: Sequence[float], temperature: float) -> int:
+        if temperature <= 0:
+            raise ValueError("temperature must be positive")
+        if not logits:
+            raise ValueError("logits must not be empty")
+        _validate_logits(logits)
+        probabilities = _softmax([value / temperature for value in logits])
+        return max(
+            range(len(probabilities)),
+            key=lambda index: probabilities[index] / self._exponential_sample(),
+        )
+
+    def _exponential_sample(self) -> float:
+        return max(self._rng.expovariate(1.0), 1e-10)
+
+
 def sample_token(
     logits: Sequence[float],
     config: SamplingConfig | None = None,

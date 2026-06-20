@@ -15,6 +15,7 @@ remote backends without rewriting sampling and stop handling.
 
 - backend-agnostic generation engine
 - greedy, temperature, top-k, and top-p sampling
+- Nano-VLLM-style batched temperature sampler
 - structured results with token usage and logprobs
 - streaming chunks
 - simple batch APIs

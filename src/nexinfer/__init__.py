@@ -14,7 +14,7 @@ from nexinfer.runtime import CompletedRequest, InferenceRuntime
 from nexinfer.sampling import SampledToken
 from nexinfer.scheduler import GenerationRequest, RequestQueue, ScheduledBatch
 from nexinfer.state import SequenceState
-from nexinfer.tokenizer import VocabularyTokenizer
+from nexinfer.tokenizer import HuggingFaceTokenizer, VocabularyTokenizer
 
 __all__ = [
     "DecoderOnlyBackend",
@@ -26,6 +26,7 @@ __all__ = [
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",
+    "HuggingFaceTokenizer",
     "InferenceRuntime",
     "KVCacheAllocation",
     "KVCacheBlock",

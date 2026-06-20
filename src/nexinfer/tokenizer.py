@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 
 class VocabularyTokenizer:
@@ -49,3 +50,28 @@ class VocabularyTokenizer:
         tokens = [self._id_to_token[token_id] for token_id in token_ids]
         return " ".join(tokens)
 
+
+class HuggingFaceTokenizer:
+    """Adapter for Hugging Face-compatible tokenizer objects."""
+
+    def __init__(self, tokenizer: Any) -> None:
+        self._tokenizer = tokenizer
+
+    @classmethod
+    def from_pretrained(cls, model_name_or_path: str, **kwargs: Any) -> "HuggingFaceTokenizer":
+        try:
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise ImportError(
+                "Install NexInfer with the transformers extra to load "
+                "tokenizers from pretrained names."
+            ) from exc
+
+        return cls(AutoTokenizer.from_pretrained(model_name_or_path, **kwargs))
+
+    def encode(self, text: str) -> list[int]:
+        token_ids = self._tokenizer.encode(text, add_special_tokens=False)
+        return [int(token_id) for token_id in token_ids]
+
+    def decode(self, token_ids: Sequence[int]) -> str:
+        return str(self._tokenizer.decode(list(token_ids), skip_special_tokens=False))

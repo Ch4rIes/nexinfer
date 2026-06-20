@@ -46,3 +46,31 @@ def test_runtime_cancel_removes_pending_request() -> None:
     assert runtime.cancel("one") is True
     assert runtime.pending_requests == 0
     assert runtime.run_once() == ()
+
+
+def test_runtime_can_drain_until_idle() -> None:
+    runtime = _runtime()
+    config = GenerationConfig(
+        max_new_tokens=3,
+        sampling=SamplingConfig(temperature=0),
+        stop_token_ids=(3,),
+    )
+    runtime.submit("a", config, request_id="one")
+    runtime.submit("c", config, request_id="two")
+
+    completed = runtime.run_until_idle()
+
+    assert [item.request_id for item in completed] == ["one", "two"]
+    assert [item.result.text for item in completed] == ["b", ""]
+    assert runtime.pending_requests == 0
+
+
+def test_runtime_drain_can_stop_after_max_batches() -> None:
+    runtime = _runtime()
+    runtime.submit("a", request_id="one")
+    runtime.submit("a", request_id="two")
+
+    completed = runtime.run_until_idle(max_batches=1)
+
+    assert [item.request_id for item in completed] == ["one"]
+    assert runtime.pending_requests == 1

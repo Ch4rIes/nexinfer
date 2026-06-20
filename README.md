@@ -83,6 +83,7 @@ from nexinfer import InferenceRuntime
 runtime = InferenceRuntime(engine, max_batch_size=8)
 runtime.submit("hello", request_id="request-1")
 completed = runtime.run_once()
+all_completed = runtime.run_until_idle()
 ```
 
 ## Development

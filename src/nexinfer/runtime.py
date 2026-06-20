@@ -56,3 +56,17 @@ class InferenceRuntime:
             CompletedRequest(request_id=request.request_id, result=result)
             for request, result in zip(batch.requests, results, strict=True)
         )
+
+    def run_until_idle(self, *, max_batches: int | None = None) -> tuple[CompletedRequest, ...]:
+        if max_batches is not None and max_batches <= 0:
+            raise ValueError("max_batches must be positive when set")
+
+        completed: list[CompletedRequest] = []
+        batches_run = 0
+        while self.pending_requests:
+            if max_batches is not None and batches_run >= max_batches:
+                break
+            completed.extend(self.run_once())
+            batches_run += 1
+
+        return tuple(completed)

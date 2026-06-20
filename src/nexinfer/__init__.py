@@ -9,6 +9,7 @@ from nexinfer.errors import (
     SchedulerError,
 )
 from nexinfer.model import ModelConfig
+from nexinfer.metrics import RuntimeStats
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
@@ -39,6 +40,7 @@ __all__ = [
     "SampledToken",
     "SamplingConfig",
     "RequestQueue",
+    "RuntimeStats",
     "ScheduledBatch",
     "SchedulerError",
     "SequenceState",

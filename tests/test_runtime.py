@@ -51,6 +51,10 @@ def test_runtime_executes_one_scheduled_batch() -> None:
     assert [item.request_id for item in completed] == ["one"]
     assert [item.result.text for item in completed] == ["b"]
     assert runtime.pending_requests == 1
+    assert runtime.stats.batches == 1
+    assert runtime.stats.requests == 1
+    assert runtime.stats.prompt_tokens == 1
+    assert runtime.stats.completion_tokens == 1
 
 
 def test_runtime_preserves_submitted_metadata() -> None:

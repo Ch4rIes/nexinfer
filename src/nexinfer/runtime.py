@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from nexinfer.config import GenerationConfig
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import ConfigurationError
+from nexinfer.metrics import RuntimeStats
 from nexinfer.result import GenerationResult
 from nexinfer.scheduler import GenerationRequest, RequestQueue
 
@@ -40,10 +41,15 @@ class InferenceRuntime:
         self._max_batch_size = max_batch_size
         self._max_batch_prompt_tokens = max_batch_prompt_tokens
         self._queue = queue or RequestQueue()
+        self._stats = RuntimeStats()
 
     @property
     def pending_requests(self) -> int:
         return len(self._queue)
+
+    @property
+    def stats(self) -> RuntimeStats:
+        return self._stats
 
     def submit(
         self,
@@ -71,9 +77,12 @@ class InferenceRuntime:
             max_prompt_tokens=self._max_batch_prompt_tokens,
         )
         results = self._engine.complete_requests(list(batch.requests))
+        result_tuple = tuple(results)
+        if result_tuple:
+            self._stats = self._stats.record_batch(result_tuple)
         return tuple(
             CompletedRequest(request_id=request.request_id, result=result)
-            for request, result in zip(batch.requests, results, strict=True)
+            for request, result in zip(batch.requests, result_tuple, strict=True)
         )
 
     def run_until_idle(self, *, max_batches: int | None = None) -> tuple[CompletedRequest, ...]:

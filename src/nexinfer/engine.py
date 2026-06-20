@@ -21,6 +21,15 @@ class LLMEngine:
 
         return self.complete(prompt, config).text
 
+    def generate_batch(
+        self,
+        prompts: list[str],
+        config: GenerationConfig | None = None,
+    ) -> list[str]:
+        """Generate text for multiple prompts."""
+
+        return [result.text for result in self.complete_batch(prompts, config)]
+
     def complete(
         self,
         prompt: str,
@@ -51,6 +60,15 @@ class LLMEngine:
                 completion_tokens=len(generated_token_ids),
             ),
         )
+
+    def complete_batch(
+        self,
+        prompts: list[str],
+        config: GenerationConfig | None = None,
+    ) -> list[GenerationResult]:
+        """Generate structured results for multiple prompts."""
+
+        return [self.complete(prompt, config) for prompt in prompts]
 
     def stream(self, prompt: str, config: GenerationConfig | None = None) -> Iterator[str]:
         """Yield decoded text fragments as tokens are generated."""

@@ -44,6 +44,14 @@ print(result.finish_reason)
 print(result.usage.total_tokens)
 ```
 
+Use `complete_batch` for multiple prompts:
+
+```python
+results = engine.complete_batch(["hello", "world"])
+for result in results:
+    print(result.text)
+```
+
 ## Development
 
 ```bash

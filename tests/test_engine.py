@@ -139,3 +139,28 @@ def test_stream_chunks_include_finish_reason_on_last_token() -> None:
             finish_reason="stop",
         )
     ]
+
+
+def test_complete_batch_returns_one_result_per_prompt() -> None:
+    tokenizer = VocabularyTokenizer(["a", "b", "c", "<eos>"], eos_token="<eos>")
+    backend = BigramBackend(
+        vocab_size=len(tokenizer),
+        transitions={
+            tokenizer.token_id("a"): {tokenizer.token_id("b"): 5.0},
+            tokenizer.token_id("b"): {tokenizer.eos_token_id: 5.0},
+            tokenizer.token_id("c"): {tokenizer.eos_token_id: 5.0},
+        },
+    )
+    engine = LLMEngine(backend, tokenizer)
+
+    results = engine.complete_batch(
+        ["a", "c"],
+        GenerationConfig(
+            max_new_tokens=3,
+            sampling=SamplingConfig(temperature=0),
+            stop_token_ids=(tokenizer.eos_token_id,),
+        ),
+    )
+
+    assert [result.text for result in results] == ["b", ""]
+    assert [result.finish_reason for result in results] == ["stop", "stop"]

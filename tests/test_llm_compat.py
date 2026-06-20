@@ -8,6 +8,7 @@ from nexinfer import (
     LLM,
     LLMConfig,
     ModelRunner,
+    ModelRunnerGroup,
     ModelOutput,
     NanoLLMEngine,
     PrefillInput,
@@ -72,6 +73,7 @@ class ContextualRunnerModel:
         self.vocab_size = vocab_size
         self.transitions = dict(transitions)
         self.close_calls = 0
+        self.calls: list[tuple[list[int], list[int], bool]] = []
 
     def run_model(
         self,
@@ -79,6 +81,7 @@ class ContextualRunnerModel:
         positions: list[int],
         is_prefill: bool,
     ) -> list[list[float]]:
+        self.calls.append((list(input_ids), list(positions), is_prefill))
         token_ids = input_ids if not is_prefill else self._prefill_token_ids(input_ids)
         return [self._logits_for(token_id) for token_id in token_ids]
 
@@ -325,6 +328,83 @@ def test_llm_rejects_unsupported_tensor_parallel_size() -> None:
 
     with pytest.raises(ConfigurationError, match="tensor_parallel_size"):
         LLM(backend=backend, tokenizer=tokenizer, tensor_parallel_size=2)
+
+
+def test_llm_accepts_matching_model_runner_group_tensor_parallel_size() -> None:
+    reset_sequence_counter()
+    tokenizer = VocabularyTokenizer(["a", "b"], eos_token=None)
+    primary_model = ContextualRunnerModel(
+        vocab_size=len(tokenizer),
+        transitions={tokenizer.token_id("a"): tokenizer.token_id("b")},
+    )
+    worker_model = ContextualRunnerModel(
+        vocab_size=len(tokenizer),
+        transitions={tokenizer.token_id("a"): tokenizer.token_id("b")},
+    )
+    runner_group = ModelRunnerGroup(
+        ModelRunner(
+            primary_model,
+            block_size=256,
+            sampler=Sampler(FixedRaceRng()),
+            rank=0,
+            world_size=2,
+        ),
+        [
+            ModelRunner(
+                worker_model,
+                block_size=256,
+                sampler=Sampler(FixedRaceRng()),
+                rank=1,
+                world_size=2,
+            )
+        ],
+    )
+
+    llm = LLM(
+        model_runner=runner_group,
+        tokenizer=tokenizer,
+        tensor_parallel_size=2,
+        num_kvcache_blocks=8,
+    )
+    outputs = llm.generate(
+        ["a"],
+        SamplingParams(temperature=0.01, max_tokens=1),
+        use_tqdm=False,
+    )
+
+    assert llm.config.tensor_parallel_size == 2
+    assert outputs == [{"text": "b", "token_ids": [tokenizer.token_id("b")]}]
+    assert [command.method_name for command in runner_group.commands] == ["run"]
+    assert primary_model.calls == [([tokenizer.token_id("a")], [0], True)]
+    assert worker_model.calls == [([tokenizer.token_id("a")], [0], True)]
+
+
+def test_llm_infers_tensor_parallel_size_from_model_runner_group() -> None:
+    tokenizer = VocabularyTokenizer(["a"])
+    runner_group = ModelRunnerGroup(
+        ModelRunner(BigramBackend(vocab_size=len(tokenizer)), block_size=256),
+        [ModelRunner(BigramBackend(vocab_size=len(tokenizer)), block_size=256)],
+    )
+
+    llm = LLM(model_runner=runner_group, tokenizer=tokenizer, num_kvcache_blocks=8)
+
+    assert llm.config.tensor_parallel_size == 2
+
+
+def test_llm_rejects_mismatched_model_runner_group_world_size() -> None:
+    tokenizer = VocabularyTokenizer(["a"])
+    runner_group = ModelRunnerGroup(
+        ModelRunner(BigramBackend(vocab_size=len(tokenizer)), block_size=256),
+        [ModelRunner(BigramBackend(vocab_size=len(tokenizer)), block_size=256)],
+    )
+
+    with pytest.raises(ConfigurationError, match="world_size"):
+        LLM(
+            model_runner=runner_group,
+            tokenizer=tokenizer,
+            tensor_parallel_size=3,
+            num_kvcache_blocks=8,
+        )
 
 
 def test_llm_accepts_nano_vllm_config_kwargs() -> None:

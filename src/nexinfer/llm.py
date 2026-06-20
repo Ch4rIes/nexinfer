@@ -55,14 +55,18 @@ class LLM:
             tensor_parallel_size=tensor_parallel_size,
             config_kwargs=config_kwargs,
         )
-        if self.config.tensor_parallel_size != 1:
-            raise ConfigurationError("tensor_parallel_size > 1 is not supported yet")
         self.enforce_eager = self.config.enforce_eager
 
         if model_runner is not None and backend is not None:
             raise ConfigurationError("backend cannot be combined with model_runner")
         if scheduler is not None and model_runner is None:
             raise ConfigurationError("scheduler requires model_runner")
+        if model_runner is not None:
+            _validate_model_runner_world_size(model_runner, self.config)
+        elif self.config.tensor_parallel_size != 1:
+            raise ConfigurationError(
+                "tensor_parallel_size > 1 requires a model_runner group"
+            )
 
         self._backend = backend
         self._nano_engine: NanoLLMEngine | None = None
@@ -300,6 +304,30 @@ def _call_optional_cleanup(target: object) -> None:
         if callable(method):
             method()
             return
+
+
+def _validate_model_runner_world_size(
+    model_runner: Any,
+    config: LLMConfig,
+) -> None:
+    world_size = getattr(model_runner, "world_size", None)
+    if world_size is None:
+        if config.tensor_parallel_size == 1:
+            return
+        raise ConfigurationError(
+            "model_runner must expose world_size for tensor_parallel_size > 1"
+        )
+
+    world_size = int(world_size)
+    if world_size <= 0:
+        raise ConfigurationError("model_runner world_size must be positive")
+    if config.tensor_parallel_size == 1 and world_size > 1:
+        config.tensor_parallel_size = world_size
+        return
+    if world_size != config.tensor_parallel_size:
+        raise ConfigurationError(
+            "model_runner world_size must match tensor_parallel_size"
+        )
 
 
 class _NoopProgress:

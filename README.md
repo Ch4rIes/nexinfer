@@ -186,6 +186,22 @@ llm = LLM(
 )
 ```
 
+For manual tensor-parallel experiments, pass a rank-aware runner group. NexInfer
+broadcasts runner commands through the group and keeps `tensor_parallel_size`
+metadata aligned with the group's `world_size`:
+
+```python
+from nexinfer import LLM, ModelRunnerGroup
+
+runner_group = ModelRunnerGroup(primary_runner, [worker_runner])
+llm = LLM(
+    model_runner=runner_group,
+    tokenizer=tokenizer,
+    tensor_parallel_size=runner_group.world_size,
+    num_kvcache_blocks=1024,
+)
+```
+
 For queued execution, wrap an engine in `InferenceRuntime`:
 
 ```python

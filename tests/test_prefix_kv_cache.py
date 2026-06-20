@@ -1,0 +1,71 @@
+import pytest
+
+from nexinfer import CacheError, PrefixKVCacheBlockManager
+
+
+def test_prefix_manager_reuses_deallocated_cached_prefix() -> None:
+    manager = PrefixKVCacheBlockManager(num_blocks=4, block_size=2)
+    first = manager.allocate("first", [1, 2, 3, 4, 5])
+    manager.hash_blocks("first", [1, 2, 3, 4, 5])
+    first_prefix_blocks = tuple(first.block_table[:2])
+    manager.deallocate("first")
+
+    plan = manager.can_allocate([1, 2, 3, 4, 9])
+    second = manager.allocate("second", [1, 2, 3, 4, 9])
+
+    assert plan.can_allocate is True
+    assert plan.num_cached_blocks == 2
+    assert second.block_table[:2] == list(first_prefix_blocks)
+    assert second.num_cached_tokens == 4
+
+
+def test_prefix_manager_shares_running_cached_blocks_with_refcounts() -> None:
+    manager = PrefixKVCacheBlockManager(num_blocks=4, block_size=2)
+    first = manager.allocate("first", [1, 2, 3])
+    manager.hash_blocks("first", [1, 2, 3])
+    prefix_block_id = first.block_table[0]
+
+    plan = manager.can_allocate([1, 2, 9])
+    second = manager.allocate("second", [1, 2, 9])
+
+    assert plan.num_cached_blocks == 1
+    assert plan.num_new_blocks == 1
+    assert second.block_table[0] == prefix_block_id
+    assert manager.blocks[prefix_block_id].ref_count == 2
+
+    manager.deallocate("second")
+    assert manager.blocks[prefix_block_id].ref_count == 1
+
+
+def test_prefix_manager_reserves_new_blocks_for_append() -> None:
+    manager = PrefixKVCacheBlockManager(num_blocks=2, block_size=2)
+    allocation = manager.allocate("seq", [1, 2])
+
+    assert allocation.token_capacity == 2
+    assert manager.can_append("seq", 1) is True
+
+    updated = manager.reserve("seq", token_count=3)
+
+    assert updated.token_count == 3
+    assert updated.token_capacity == 4
+    assert len(updated.block_table) == 2
+
+
+def test_prefix_manager_reports_allocation_failure() -> None:
+    manager = PrefixKVCacheBlockManager(num_blocks=1, block_size=2)
+    manager.allocate("seq", [1, 2])
+
+    assert manager.can_allocate([3, 4]).can_allocate is False
+    with pytest.raises(CacheError, match="not enough free"):
+        manager.allocate("other", [3, 4])
+
+
+def test_prefix_manager_hashes_only_complete_blocks_once() -> None:
+    manager = PrefixKVCacheBlockManager(num_blocks=3, block_size=2)
+    manager.allocate("seq", [1, 2, 3])
+
+    first_hashes = manager.hash_blocks("seq", [1, 2, 3])
+    second_hashes = manager.hash_blocks("seq", [1, 2, 3])
+
+    assert len(first_hashes) == 1
+    assert second_hashes == ()

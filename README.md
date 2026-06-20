@@ -70,14 +70,19 @@ for result in results:
 ```
 
 The cache module includes early block-table primitives for future paged KV-cache
-work:
+work. `PrefixKVCacheBlockManager` adds the Nano-VLLM-style pieces: ref-counted
+blocks, cached-prefix hashes, append reservation, and deallocation:
 
 ```python
-from nexinfer import KVCacheBlockAllocator
+from nexinfer import KVCacheBlockAllocator, PrefixKVCacheBlockManager
 
 allocator = KVCacheBlockAllocator(block_size=16, max_blocks=1024)
 allocation = allocator.allocate("request-1", token_count=33)
 print(allocation.block_table)
+
+manager = PrefixKVCacheBlockManager(num_blocks=1024, block_size=16)
+manager.allocate("request-1", [1, 2, 3, 4])
+manager.hash_blocks("request-1", [1, 2, 3, 4])
 ```
 
 The scheduler module starts with a FIFO queue that can form small execution

@@ -1,4 +1,12 @@
-from nexinfer.cache import KVCacheAllocation, KVCacheBlock, KVCacheBlockAllocator
+from nexinfer.cache import (
+    KVCacheAllocation,
+    KVCacheAllocationPlan,
+    KVCacheBlock,
+    KVCacheBlockAllocator,
+    ManagedKVCacheAllocation,
+    ManagedKVCacheBlock,
+    PrefixKVCacheBlockManager,
+)
 from nexinfer.config import GenerationConfig, SamplingConfig
 from nexinfer.engine import LLMEngine
 from nexinfer.errors import (
@@ -50,12 +58,16 @@ __all__ = [
     "HuggingFaceTokenizer",
     "InferenceRuntime",
     "KVCacheAllocation",
+    "KVCacheAllocationPlan",
     "KVCacheBlock",
     "KVCacheBlockAllocator",
     "LLMEngine",
     "ModelOutput",
     "ModelConfig",
     "NexInferError",
+    "ManagedKVCacheAllocation",
+    "ManagedKVCacheBlock",
+    "PrefixKVCacheBlockManager",
     "SampledToken",
     "SamplingConfig",
     "RequestQueue",

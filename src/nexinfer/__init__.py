@@ -1,3 +1,4 @@
+from nexinfer.cache import KVCacheAllocation, KVCacheBlock, KVCacheBlockAllocator
 from nexinfer.config import GenerationConfig, SamplingConfig
 from nexinfer.engine import LLMEngine
 from nexinfer.protocols import DecoderOnlyBackend, ModelOutput, Tokenizer
@@ -10,6 +11,9 @@ __all__ = [
     "DecoderOnlyBackend",
     "GenerationConfig",
     "GenerationResult",
+    "KVCacheAllocation",
+    "KVCacheBlock",
+    "KVCacheBlockAllocator",
     "LLMEngine",
     "ModelOutput",
     "SampledToken",

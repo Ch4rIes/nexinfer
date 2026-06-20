@@ -53,6 +53,17 @@ for result in results:
     print(result.text)
 ```
 
+The cache module includes early block-table primitives for future paged KV-cache
+work:
+
+```python
+from nexinfer import KVCacheBlockAllocator
+
+allocator = KVCacheBlockAllocator(block_size=16, max_blocks=1024)
+allocation = allocator.allocate("request-1", token_count=33)
+print(allocation.block_table)
+```
+
 ## Development
 
 ```bash

@@ -4,7 +4,7 @@ import random
 from collections.abc import Iterator
 
 from nexinfer.config import GenerationConfig
-from nexinfer.protocols import DecoderOnlyBackend, Tokenizer
+from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
 from nexinfer.scheduler import GenerationRequest
@@ -133,7 +133,7 @@ class LLMEngine:
             return sequence
 
         output = self._backend.begin(input_ids)
-        _validate_vocab_size(output.logits, self._backend.vocab_size)
+        _validate_model_output(output, self._backend.vocab_size)
 
         rng = random.Random(config.sampling.seed)
         stop_token_ids = set(config.stop_token_ids)
@@ -149,10 +149,16 @@ class LLMEngine:
 
             sequence.append(token_id, sampled.logprob)
             output = self._backend.step(token_id, output.state)
-            _validate_vocab_size(output.logits, self._backend.vocab_size)
+            _validate_model_output(output, self._backend.vocab_size)
 
         sequence.finish("length")
         return sequence
+
+
+def _validate_model_output(output: ModelOutput, vocab_size: int) -> None:
+    _validate_vocab_size(output.logits, vocab_size)
+    if not isinstance(output.state, DecodeState):
+        raise ValueError("backend state must be a DecodeState")
 
 
 def _validate_vocab_size(logits: object, vocab_size: int) -> None:

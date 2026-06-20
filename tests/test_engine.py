@@ -1,6 +1,7 @@
 import pytest
 
 from nexinfer import (
+    DecodeState,
     GenerationConfig,
     LLMEngine,
     RequestQueue,
@@ -69,15 +70,32 @@ def test_validates_backend_vocab_size() -> None:
         vocab_size = 3
 
         def begin(self, input_ids: list[int]) -> ModelOutput:
-            return ModelOutput([1.0, 2.0])
+            return ModelOutput([1.0, 2.0], DecodeState(position=0))
 
-        def step(self, token_id: int, state: object) -> ModelOutput:
-            return ModelOutput([1.0, 2.0])
+        def step(self, token_id: int, state: DecodeState) -> ModelOutput:
+            return ModelOutput([1.0, 2.0], DecodeState(position=1))
 
     tokenizer = VocabularyTokenizer(["a"])
     engine = LLMEngine(BrokenBackend(), tokenizer)
 
     with pytest.raises(ValueError, match="expected vocab size"):
+        engine.generate("a")
+
+
+def test_validates_backend_decode_state() -> None:
+    class BrokenBackend:
+        vocab_size = 2
+
+        def begin(self, input_ids: list[int]) -> ModelOutput:
+            return ModelOutput([1.0, 2.0], None)  # type: ignore[arg-type]
+
+        def step(self, token_id: int, state: DecodeState) -> ModelOutput:
+            return ModelOutput([1.0, 2.0], DecodeState(position=1))
+
+    tokenizer = VocabularyTokenizer(["a"])
+    engine = LLMEngine(BrokenBackend(), tokenizer)
+
+    with pytest.raises(ValueError, match="DecodeState"):
         engine.generate("a")
 
 

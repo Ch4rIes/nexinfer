@@ -5,11 +5,20 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
+class DecodeState:
+    """Backend decode state after prefill or one decode step."""
+
+    position: int
+    backend_state: Any = None
+    cache: Any = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelOutput:
     """Next-token logits and the backend-specific decode state."""
 
     logits: Sequence[float]
-    state: Any = None
+    state: DecodeState
 
 
 @runtime_checkable
@@ -23,7 +32,7 @@ class DecoderOnlyBackend(Protocol):
     def begin(self, input_ids: Sequence[int]) -> ModelOutput:
         """Return logits for the token after the prompt."""
 
-    def step(self, token_id: int, state: Any) -> ModelOutput:
+    def step(self, token_id: int, state: DecodeState) -> ModelOutput:
         """Consume one generated token and return logits for the next one."""
 
 
@@ -36,4 +45,3 @@ class Tokenizer(Protocol):
 
     def decode(self, token_ids: Sequence[int]) -> str:
         """Convert token ids back into text."""
-

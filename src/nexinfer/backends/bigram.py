@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from nexinfer.protocols import ModelOutput
+from nexinfer.protocols import DecodeState, ModelOutput
 
 
 class BigramBackend:
@@ -29,11 +29,21 @@ class BigramBackend:
         previous_token_id = input_ids[-1] if input_ids else None
         return ModelOutput(
             logits=self._logits_for(previous_token_id),
-            state=previous_token_id,
+            state=DecodeState(
+                position=len(input_ids),
+                backend_state=previous_token_id,
+            ),
         )
 
-    def step(self, token_id: int, state: object) -> ModelOutput:
-        return ModelOutput(logits=self._logits_for(token_id), state=token_id)
+    def step(self, token_id: int, state: DecodeState) -> ModelOutput:
+        return ModelOutput(
+            logits=self._logits_for(token_id),
+            state=DecodeState(
+                position=state.position + 1,
+                backend_state=token_id,
+                cache=state.cache,
+            ),
+        )
 
     def _logits_for(self, previous_token_id: int | None) -> list[float]:
         logits = [self._default_logit] * self._vocab_size

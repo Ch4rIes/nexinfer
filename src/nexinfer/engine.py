@@ -4,6 +4,7 @@ import random
 from collections.abc import Iterator
 
 from nexinfer.config import GenerationConfig
+from nexinfer.errors import BackendError
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.sampling import sample_next
@@ -158,16 +159,16 @@ class LLMEngine:
 def _validate_model_output(output: ModelOutput, vocab_size: int) -> None:
     _validate_vocab_size(output.logits, vocab_size)
     if not isinstance(output.state, DecodeState):
-        raise ValueError("backend state must be a DecodeState")
+        raise BackendError("backend state must be a DecodeState")
 
 
 def _validate_vocab_size(logits: object, vocab_size: int) -> None:
     try:
         actual = len(logits)  # type: ignore[arg-type]
     except TypeError as exc:
-        raise ValueError("backend logits must be a sized sequence") from exc
+        raise BackendError("backend logits must be a sized sequence") from exc
 
     if actual != vocab_size:
-        raise ValueError(
+        raise BackendError(
             f"backend returned {actual} logits, expected vocab size {vocab_size}"
         )

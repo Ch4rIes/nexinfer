@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from itertools import count
 
 from nexinfer.config import GenerationConfig
+from nexinfer.errors import SchedulerError
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +47,7 @@ class RequestQueue:
     ) -> GenerationRequest:
         request_id = request_id or f"req-{next(self._ids)}"
         if request_id in self._pending_ids:
-            raise ValueError(f"duplicate request id: {request_id}")
+            raise SchedulerError(f"duplicate request id: {request_id}")
 
         request = GenerationRequest(
             request_id=request_id,
@@ -59,7 +60,7 @@ class RequestQueue:
 
     def schedule(self, *, max_requests: int) -> ScheduledBatch:
         if max_requests <= 0:
-            raise ValueError("max_requests must be positive")
+            raise SchedulerError("max_requests must be positive")
 
         requests: list[GenerationRequest] = []
         while self._pending and len(requests) < max_requests:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import ceil
 
+from nexinfer.errors import CacheError, ConfigurationError
+
 
 @dataclass(frozen=True, slots=True)
 class KVCacheBlock:
@@ -35,9 +37,9 @@ class KVCacheBlockAllocator:
 
     def __init__(self, *, block_size: int, max_blocks: int) -> None:
         if block_size <= 0:
-            raise ValueError("block_size must be positive")
+            raise ConfigurationError("block_size must be positive")
         if max_blocks <= 0:
-            raise ValueError("max_blocks must be positive")
+            raise ConfigurationError("max_blocks must be positive")
 
         self._block_size = block_size
         self._free_block_ids = list(range(max_blocks))
@@ -57,13 +59,13 @@ class KVCacheBlockAllocator:
 
     def allocate(self, sequence_id: str, token_count: int) -> KVCacheAllocation:
         if token_count < 0:
-            raise ValueError("token_count must be non-negative")
+            raise ConfigurationError("token_count must be non-negative")
         if sequence_id in self._allocations:
-            raise ValueError(f"sequence already has an allocation: {sequence_id}")
+            raise CacheError(f"sequence already has an allocation: {sequence_id}")
 
         block_count = ceil(token_count / self._block_size) if token_count else 0
         if block_count > self.free_blocks:
-            raise MemoryError("not enough free KV-cache blocks")
+            raise CacheError("not enough free KV-cache blocks")
 
         block_ids = [self._free_block_ids.pop(0) for _ in range(block_count)]
         allocation = KVCacheAllocation(
@@ -80,7 +82,7 @@ class KVCacheBlockAllocator:
 
     def reserve(self, sequence_id: str, additional_tokens: int) -> KVCacheAllocation:
         if additional_tokens < 0:
-            raise ValueError("additional_tokens must be non-negative")
+            raise ConfigurationError("additional_tokens must be non-negative")
 
         allocation = self._allocation_for(sequence_id)
         needed_tokens = allocation.token_count + additional_tokens
@@ -98,7 +100,7 @@ class KVCacheBlockAllocator:
             (needed_tokens - allocation.token_capacity) / self._block_size
         )
         if additional_blocks > self.free_blocks:
-            raise MemoryError("not enough free KV-cache blocks")
+            raise CacheError("not enough free KV-cache blocks")
 
         new_block_ids = [
             self._free_block_ids.pop(0) for _ in range(additional_blocks)

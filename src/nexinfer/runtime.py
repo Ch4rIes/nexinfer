@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from nexinfer.config import GenerationConfig
 from nexinfer.engine import LLMEngine
+from nexinfer.errors import ConfigurationError
 from nexinfer.result import GenerationResult
 from nexinfer.scheduler import GenerationRequest, RequestQueue
 
@@ -27,7 +28,7 @@ class InferenceRuntime:
         queue: RequestQueue | None = None,
     ) -> None:
         if max_batch_size <= 0:
-            raise ValueError("max_batch_size must be positive")
+            raise ConfigurationError("max_batch_size must be positive")
 
         self._engine = engine
         self._max_batch_size = max_batch_size
@@ -59,7 +60,7 @@ class InferenceRuntime:
 
     def run_until_idle(self, *, max_batches: int | None = None) -> tuple[CompletedRequest, ...]:
         if max_batches is not None and max_batches <= 0:
-            raise ValueError("max_batches must be positive when set")
+            raise ConfigurationError("max_batches must be positive when set")
 
         completed: list[CompletedRequest] = []
         batches_run = 0

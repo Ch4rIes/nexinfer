@@ -1,6 +1,13 @@
 from nexinfer.cache import KVCacheAllocation, KVCacheBlock, KVCacheBlockAllocator
 from nexinfer.config import GenerationConfig, SamplingConfig
 from nexinfer.engine import LLMEngine
+from nexinfer.errors import (
+    BackendError,
+    CacheError,
+    ConfigurationError,
+    NexInferError,
+    SchedulerError,
+)
 from nexinfer.protocols import DecodeState, DecoderOnlyBackend, ModelOutput, Tokenizer
 from nexinfer.result import GenerationResult, StreamChunk, TokenUsage
 from nexinfer.runtime import CompletedRequest, InferenceRuntime
@@ -12,20 +19,25 @@ from nexinfer.tokenizer import VocabularyTokenizer
 __all__ = [
     "DecoderOnlyBackend",
     "DecodeState",
+    "BackendError",
+    "CacheError",
+    "ConfigurationError",
+    "CompletedRequest",
     "GenerationConfig",
     "GenerationResult",
     "GenerationRequest",
-    "CompletedRequest",
     "InferenceRuntime",
     "KVCacheAllocation",
     "KVCacheBlock",
     "KVCacheBlockAllocator",
     "LLMEngine",
     "ModelOutput",
+    "NexInferError",
     "SampledToken",
     "SamplingConfig",
     "RequestQueue",
     "ScheduledBatch",
+    "SchedulerError",
     "SequenceState",
     "StreamChunk",
     "TokenUsage",

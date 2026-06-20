@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from nexinfer.errors import ConfigurationError
+
 
 @dataclass(frozen=True, slots=True)
 class SamplingConfig:
@@ -14,11 +16,11 @@ class SamplingConfig:
 
     def __post_init__(self) -> None:
         if self.temperature < 0:
-            raise ValueError("temperature must be non-negative")
+            raise ConfigurationError("temperature must be non-negative")
         if self.top_k is not None and self.top_k <= 0:
-            raise ValueError("top_k must be positive when set")
+            raise ConfigurationError("top_k must be positive when set")
         if self.top_p is not None and not 0 < self.top_p <= 1:
-            raise ValueError("top_p must be in the interval (0, 1]")
+            raise ConfigurationError("top_p must be in the interval (0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,5 +35,4 @@ class GenerationConfig:
 
     def __post_init__(self) -> None:
         if self.max_new_tokens < 0:
-            raise ValueError("max_new_tokens must be non-negative")
-
+            raise ConfigurationError("max_new_tokens must be non-negative")

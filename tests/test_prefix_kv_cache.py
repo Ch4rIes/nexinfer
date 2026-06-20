@@ -1,6 +1,21 @@
 import pytest
 
-from nexinfer import BlockManager, CacheError, PrefixKVCacheBlockManager, Sequence
+from nexinfer import (
+    Block,
+    BlockManager,
+    CacheError,
+    ManagedKVCacheBlock,
+    PrefixKVCacheBlockManager,
+    Sequence,
+)
+
+
+def test_block_alias_matches_nano_vllm_public_name() -> None:
+    manager = BlockManager(2, 2)
+
+    assert Block is ManagedKVCacheBlock
+    assert isinstance(manager.blocks[0], Block)
+    assert manager.blocks[0].block_id == 0
 
 
 def test_prefix_manager_reuses_deallocated_cached_prefix() -> None:

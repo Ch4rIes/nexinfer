@@ -165,6 +165,9 @@ class ManagedKVCacheBlock:
         self.token_ids = tuple(token_ids)
 
 
+Block = ManagedKVCacheBlock
+
+
 @dataclass(frozen=True, slots=True)
 class KVCacheAllocationPlan:
     """Allocation feasibility and prefix-cache hit information."""

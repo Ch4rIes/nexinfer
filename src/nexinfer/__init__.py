@@ -1,4 +1,5 @@
 from nexinfer.cache import (
+    Block,
     BlockManager,
     KVCacheAllocation,
     KVCacheAllocationPlan,
@@ -70,6 +71,7 @@ __all__ = [
     "DecodeState",
     "DecodeInput",
     "BackendError",
+    "Block",
     "BlockManager",
     "CacheError",
     "ConfigurationError",

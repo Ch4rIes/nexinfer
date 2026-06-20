@@ -35,6 +35,7 @@ remote backends without rewriting sampling and stop handling.
 - FIFO request scheduling
 - queued runtime execution
 - runtime execution counters
+- Nano-VLLM-style `Block`/`BlockManager` cache facade
 - early KV-cache block-table primitives
 - optional Hugging Face tokenizer adapter
 - optional PyTorch causal-LM backend scaffold
